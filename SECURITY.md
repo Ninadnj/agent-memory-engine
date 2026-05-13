@@ -10,4 +10,5 @@ This scaffold is documentation-only and does not execute code.
 
 ## Reporting Security Issues
 
-Report security issues privately to the repository owner or maintainer. Do not open a public issue with sensitive details.
+Report security issues privately to the repository owner or maintainer.
+Do not open a public issue with sensitive details.

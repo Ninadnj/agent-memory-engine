@@ -1,6 +1,7 @@
 # Refactor Workflow
 
-Use this only when the task is explicitly a refactor or when a refactor is required for the requested change.
+Use this only when the task is explicitly a refactor or when a refactor is
+required for the requested change.
 
 1. State the behavior that must remain unchanged.
 2. Identify files in scope.

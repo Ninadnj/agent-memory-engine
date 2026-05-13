@@ -2,7 +2,9 @@
 
 Stable project facts for AI coding agents.
 
-Keep this file short. Replace placeholders only with verified facts from the repo, commands that actually exist, or explicit user instructions. Do not invent project facts.
+Keep this file short. Replace placeholders only with verified facts from the
+repo, commands that actually exist, or explicit user instructions.
+Do not invent project facts.
 
 ## Purpose
 

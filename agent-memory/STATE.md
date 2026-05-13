@@ -2,7 +2,8 @@
 
 Current active task only.
 
-Rewrite this file as work changes. Keep it compact. Do not store old history, raw logs, speculation, or completed-task summaries.
+Rewrite this file as work changes. Keep it compact. Do not store old history,
+raw logs, speculation, or completed-task summaries.
 
 ## Active Task
 

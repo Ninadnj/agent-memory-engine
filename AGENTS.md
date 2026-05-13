@@ -2,7 +2,9 @@
 
 You are working inside this repository as an AI coding agent.
 
-Make the smallest safe change that solves the real problem, preserve the existing system, verify your work, and leave clear handoff state for future sessions.
+Make the smallest safe change that solves the real problem, preserve the
+existing system, verify your work, and leave clear handoff state for future
+sessions.
 
 ## Priorities
 
@@ -27,7 +29,8 @@ For non-trivial work, also read:
 
 Read only when relevant:
 
-- `agent-memory/DECISIONS.md` for architecture, data, security, deployment, or product behavior changes
+- `agent-memory/DECISIONS.md` for architecture, data, security, deployment, or
+  product behavior changes
 - `agent-memory/KNOWN_ISSUES.md` when touching related areas
 - `agent-memory/WORKLOG.md` only when historical context is needed
 - `workflows/debug.md` only for bug fixing
@@ -58,8 +61,10 @@ Code is the source of truth. Load the minimum useful context.
 
 - Write simple, maintainable code.
 - Prefer boring, readable code over clever abstractions.
-- Reuse existing helpers, utilities, components, constants, and patterns before creating new ones.
-- Avoid duplicated validation, formatting, API calls, database queries, and business logic.
+- Reuse existing helpers, utilities, components, constants, and patterns before
+  creating new ones.
+- Avoid duplicated validation, formatting, API calls, database queries, and
+  business logic.
 - Do not write 200 lines when 50 clear lines solve the problem.
 - Keep functions small and focused.
 - Keep files focused.
@@ -69,7 +74,8 @@ Code is the source of truth. Load the minimum useful context.
 - Validate inputs at system boundaries.
 - Use explicit names instead of comments explaining confusing code.
 - Add comments only to explain why something exists, not what obvious code does.
-- Avoid unnecessary abstractions, dependencies, and future-proofing for hypothetical requirements.
+- Avoid unnecessary abstractions, dependencies, and future-proofing for
+  hypothetical requirements.
 
 ## Change Size Rule
 
@@ -108,14 +114,17 @@ Use memory to preserve useful state, not history for its own sake.
 
 Update only the right file:
 
-- `agent-memory/PROJECT.md`: verified stable project facts, commands, architecture map, env vars
+- `agent-memory/PROJECT.md`: verified stable project facts, commands,
+  architecture map, env vars
 - `agent-memory/STATE.md`: current active task only
 - `agent-memory/HANDOFF.md`: exact continuation state for the next agent
-- `agent-memory/DECISIONS.md`: durable architecture, product, data, security, or deployment decisions
+- `agent-memory/DECISIONS.md`: durable architecture, product, data, security,
+  or deployment decisions
 - `agent-memory/KNOWN_ISSUES.md`: unresolved bugs, risks, or technical debt
 - `agent-memory/WORKLOG.md`: compact completed-task history only when useful
 
-Do not store secrets, raw logs, speculation, duplicate summaries, trivial changes, stale guesses, or personal commentary.
+Do not store secrets, raw logs, speculation, duplicate summaries, trivial
+changes, stale guesses, or personal commentary.
 
 ## End Of Session
 

@@ -4,11 +4,16 @@ A lightweight Markdown memory and handoff scaffold for AI coding agents.
 
 ## Repository Description
 
-Switch between AI coding agents without losing context, duplicating instructions, or loading unnecessary history.
+Switch between AI coding agents without losing context, duplicating instructions, or
+loading unnecessary history.
 
-This repo is for developers who use tools like Codex, Claude Code, Gemini, or other coding agents in the same project. It gives agents a small set of files for project facts, current state, handoff notes, decisions, known issues, and compact work history.
+This repo is for developers who use tools like Codex, Claude Code, Gemini, or
+other coding agents in the same project. It gives agents a small set of files
+for project facts, current state, handoff notes, decisions, known issues, and
+compact work history.
 
-It is not a framework. It does not run code, install dependencies, manage a database, or automate your workflow.
+It is not a framework. It does not run code, install dependencies, manage a
+database, or automate your workflow.
 
 ## Who This Is For
 
@@ -20,9 +25,11 @@ It is not a framework. It does not run code, install dependencies, manage a data
 
 ## What Problem It Solves
 
-AI coding agents often lose context when you switch tools or start a new session. The usual workaround is to paste long summaries or reload too much history.
+AI coding agents often lose context when you switch tools or start a new session.
+The usual workaround is to paste long summaries or reload too much history.
 
-This scaffold keeps the important context in plain Markdown files so agents can read only what they need:
+This scaffold keeps the important context in plain Markdown files so agents can
+read only what they need:
 
 - stable project facts
 - current active task
@@ -31,7 +38,23 @@ This scaffold keeps the important context in plain Markdown files so agents can 
 - unresolved issues
 - compact completed history
 
-`AGENTS.md` remains the source of truth for agent behavior. The other files provide memory, prompts, and optional task workflows.
+`AGENTS.md` remains the source of truth for agent behavior. The other files
+provide memory, prompts, and optional task workflows.
+
+## Why Not Just Use Chat History?
+
+Chat history is useful, but it is noisy, tool-specific, and hard to transfer
+between agents.
+
+This scaffold keeps only the durable working context:
+
+- what the project is
+- what is being worked on
+- what changed
+- what decisions matter
+- what the next agent should do
+
+It is not meant to replace chat history. It is meant to reduce dependency on it.
 
 ## Folder Structure
 
@@ -63,7 +86,8 @@ workflows/
 4. Use `/end` before stopping or switching agents, if supported.
 5. Let the next agent read the memory files before continuing.
 
-If slash commands are not supported, paste `commands/start.md` or `commands/end.md` into the agent.
+If slash commands are not supported, paste `commands/start.md` or
+`commands/end.md` into the agent.
 
 ## Example Workflow
 
@@ -80,17 +104,28 @@ flowchart LR
   E --> F[Next agent continues]
 ```
 
+## Tool Compatibility
+
+| Tool | How to use this scaffold |
+| --- | --- |
+| Codex | Ask it to read `AGENTS.md` and follow the read policy. |
+| Claude Code | Uses `CLAUDE.md` as a pointer to `AGENTS.md`. |
+| Gemini | Paste `commands/start.md` or `commands/end.md` manually if slash commands are not supported. |
+| Any coding agent | Read `AGENTS.md`, then load only the memory files needed for the current task. |
+
 ## Start A Session
 
 At the beginning of a session, the agent should:
 
 - read `AGENTS.md`
 - follow the Read Policy in `AGENTS.md`
-- read `agent-memory/PROJECT.md`, `STATE.md`, and `HANDOFF.md` for non-trivial work
+- read `agent-memory/PROJECT.md`, `STATE.md`, and `HANDOFF.md` for
+  non-trivial work
 - summarize project context, active task, and next safe step
 - inspect relevant files before editing
 
-Use `commands/start.md` as a portable prompt when native slash commands are not available.
+Use `commands/start.md` as a portable prompt when native slash commands are not
+available.
 
 ## End A Session
 
@@ -102,7 +137,23 @@ Before stopping or switching agents, the agent should:
 - avoid updating `PROJECT.md` unless stable verified facts changed
 - avoid updating `DECISIONS.md` unless a durable decision was made
 
-Use `commands/end.md` as a portable prompt when native slash commands are not available.
+Use `commands/end.md` as a portable prompt when native slash commands are not
+available.
+
+## Copy Into Existing Repo
+
+```bash
+git clone https://github.com/Ninadnj/ai-agent-memory-scaffold.git
+
+cp ai-agent-memory-scaffold/AGENTS.md ./AGENTS.md
+cp ai-agent-memory-scaffold/CLAUDE.md ./CLAUDE.md
+cp -R ai-agent-memory-scaffold/agent-memory ./agent-memory
+cp -R ai-agent-memory-scaffold/commands ./commands
+cp -R ai-agent-memory-scaffold/workflows ./workflows
+```
+
+After copying, fill in `agent-memory/PROJECT.md`, clear or rewrite
+`STATE.md` and `HANDOFF.md`, then commit the scaffold into your project.
 
 ## Example STATE.md
 
@@ -163,16 +214,20 @@ Use `commands/end.md` as a portable prompt when native slash commands are not av
 
 ## Memory Model
 
-`STATE.md` and `HANDOFF.md` are current memory. They should be rewritten and compacted as work changes.
+`STATE.md` and `HANDOFF.md` are current memory. They should be rewritten and
+compacted as work changes.
 
-`PROJECT.md`, `DECISIONS.md`, `KNOWN_ISSUES.md`, and `WORKLOG.md` are collected memory over time:
+`PROJECT.md`, `DECISIONS.md`, `KNOWN_ISSUES.md`, and `WORKLOG.md` are collected
+memory over time:
 
 - `PROJECT.md` stores only verified stable project facts.
-- `DECISIONS.md` stores only durable architecture, product, data, security, or deployment decisions.
+- `DECISIONS.md` stores only durable architecture, product, data, security, or
+  deployment decisions.
 - `KNOWN_ISSUES.md` stores only unresolved problems.
 - `WORKLOG.md` stores compact completed-task history and should stay short.
 
-Do not load `WORKLOG.md` by default. Use it only when historical context is needed.
+Do not load `WORKLOG.md` by default. Use it only when historical context is
+needed.
 
 ## What Not To Store
 
@@ -192,7 +247,8 @@ Do not store:
 - personal commentary
 - sensitive client, production, or operational details
 
-Use placeholders for examples. Store only context that helps the next agent work safely.
+Use placeholders for examples. Store only context that helps the next agent work
+safely.
 
 ## Adapting This In Another Repo
 
@@ -205,19 +261,23 @@ Keep the structure simple:
 - Load workflow docs only for matching debug, refactor, or deploy work.
 - Add project-specific rules only when they are durable and useful.
 
-Avoid adding scripts, databases, dependencies, or automation unless your own project clearly needs them.
+Avoid adding scripts, databases, dependencies, or automation unless your own
+project clearly needs them.
 
-## Recommended GitHub Topics
+## Recommended GitHub Settings
 
-Add these in GitHub repo settings:
+These are manual GitHub UI steps:
 
-- `ai-agents`
-- `coding-agents`
-- `agent-memory`
-- `codex`
-- `claude-code`
-- `gemini`
-- `developer-tools`
-- `template`
-- `handoff`
-- `markdown`
+- Mark this repository as a Template repository.
+- Add repository topics:
+  - `ai-agents`
+  - `coding-agents`
+  - `agent-memory`
+  - `codex`
+  - `claude-code`
+  - `gemini`
+  - `developer-tools`
+  - `template`
+  - `handoff`
+  - `markdown`
+- Create a first release such as `v0.1.0` when the scaffold is stable.

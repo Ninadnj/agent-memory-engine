@@ -1,7 +1,12 @@
 # CLAUDE.md
 
-`AGENTS.md` is the source of truth for this repository.
+This repo uses `AGENTS.md` as the source of truth for agent behavior.
 
-Read `AGENTS.md` first, then follow its read policy for project memory and workflow files.
+Claude Code should:
 
-Do not duplicate agent rules here.
+1. Read `AGENTS.md` first.
+2. Follow its read policy.
+3. Load only the memory files needed for the current task.
+4. Avoid duplicating rules in this file.
+
+Do not copy the full agent rules here.

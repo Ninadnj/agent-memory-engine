@@ -1,6 +1,7 @@
 # Deploy Workflow
 
-Use this when changing deployment, infrastructure, env vars, build config, Docker, CI, or hosting.
+Use this when changing deployment, infrastructure, env vars, build config,
+Docker, CI, or hosting.
 
 1. Identify the target environment.
 2. Check required env vars.

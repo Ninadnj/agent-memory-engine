@@ -1,10 +1,12 @@
 # HOWTOUSE.md
 
-Short human guide for using this repository with Claude Code, Codex, or another AI coding agent.
+Short human guide for using this repository with Claude Code, Codex, or another
+AI coding agent.
 
 ## Start Session
 
-Use `/start` if your agent supports repo slash commands. If not, paste `commands/start.md`.
+Use `/start` if your agent supports repo slash commands. If not, paste
+`commands/start.md`.
 
 Reusable prompt:
 
@@ -16,7 +18,8 @@ Inspect relevant files before editing.
 
 ## End Session
 
-Use `/end` if your agent supports repo slash commands. If not, paste `commands/end.md`.
+Use `/end` if your agent supports repo slash commands. If not, paste
+`commands/end.md`.
 
 Reusable prompt:
 
@@ -33,5 +36,7 @@ Append agent-memory/WORKLOG.md only if the repo changed meaningfully.
 - `agent-memory/PROJECT.md` stores verified stable project facts.
 - `agent-memory/STATE.md` stores the current active task only.
 - `agent-memory/HANDOFF.md` stores continuation state for the next agent.
-- `agent-memory/DECISIONS.md`, `KNOWN_ISSUES.md`, and `WORKLOG.md` are read only when relevant.
-- `workflows/` docs are loaded only for matching debug, refactor, or deploy tasks.
+- `agent-memory/DECISIONS.md`, `KNOWN_ISSUES.md`, and `WORKLOG.md` are read
+  only when relevant.
+- `workflows/` docs are loaded only for matching debug, refactor, or deploy
+  tasks.

@@ -2,7 +2,8 @@
 
 Continuation state for the next AI coding agent.
 
-Rewrite this file at the end of each non-trivial session. Keep only what affects the next step.
+Rewrite this file at the end of each non-trivial session.
+Keep only what affects the next step.
 
 ## Last Session Summary
 
