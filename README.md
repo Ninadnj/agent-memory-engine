@@ -1,6 +1,6 @@
 # Lightweight AI Agent Memory Scaffold
 
-A lightweight file-based memory and handoff scaffold for AI coding agents.
+A lightweight Markdown memory and handoff scaffold for AI coding agents.
 
 ## Repository Description
 
@@ -9,6 +9,14 @@ Switch between AI coding agents without losing context, duplicating instructions
 This repo is for developers who use tools like Codex, Claude Code, Gemini, or other coding agents in the same project. It gives agents a small set of files for project facts, current state, handoff notes, decisions, known issues, and compact work history.
 
 It is not a framework. It does not run code, install dependencies, manage a database, or automate your workflow.
+
+## Who This Is For
+
+- Developers using multiple AI coding agents in the same repo.
+- People switching between Codex, Claude Code, Gemini, and similar tools.
+- Solo builders who need project continuity between sessions.
+- Teams that want safer AI handoffs.
+- Anyone tired of pasting the same context repeatedly.
 
 ## What Problem It Solves
 
@@ -49,12 +57,28 @@ workflows/
 
 ## Quick Start
 
-1. Copy these files into your project.
+1. Use this repo as a template or copy the files into an existing repo.
 2. Fill in `agent-memory/PROJECT.md` with verified stable facts from your repo.
-3. Start a session with `/start` if your agent supports repo commands.
-4. If `/start` is not supported, paste `commands/start.md` into the agent.
-5. End a session with `/end` if your agent supports repo commands.
-6. If `/end` is not supported, paste `commands/end.md` into the agent.
+3. Use `/start` before an agent session, if supported.
+4. Use `/end` before stopping or switching agents, if supported.
+5. Let the next agent read the memory files before continuing.
+
+If slash commands are not supported, paste `commands/start.md` or `commands/end.md` into the agent.
+
+## Example Workflow
+
+```text
+/start -> read AGENTS.md + PROJECT.md + STATE.md -> work -> /end -> update STATE.md + HANDOFF.md + WORKLOG.md
+```
+
+```mermaid
+flowchart LR
+  A[/start/] --> B[Read AGENTS + PROJECT + STATE]
+  B --> C[Work on task]
+  C --> D[/end/]
+  D --> E[Update STATE + HANDOFF + WORKLOG]
+  E --> F[Next agent continues]
+```
 
 ## Start A Session
 
@@ -80,6 +104,63 @@ Before stopping or switching agents, the agent should:
 
 Use `commands/end.md` as a portable prompt when native slash commands are not available.
 
+## Example STATE.md
+
+```md
+# STATE.md
+
+## Active Task
+
+- Task: Add password reset email copy.
+- Status: implementing
+- Owner agent: Codex
+- Started: 2026-05-13
+
+## Current Understanding
+
+- Auth routes already exist.
+- Email templates live in `emails/`.
+
+## Files In Scope
+
+- `emails/password-reset.md`
+- `src/auth/reset.ts`
+
+## Next Step
+
+- Update the email copy and run the existing auth tests.
+
+## Blockers
+
+- None.
+```
+
+## Example HANDOFF.md
+
+```md
+# HANDOFF.md
+
+## Last Session Summary
+
+- Updated password reset email copy.
+- Confirmed the reset token link still uses the existing helper.
+
+## Current Status
+
+- Status: verifying
+- Last completed step: copy update
+- Next recommended step: run auth email tests
+- Blocker: none
+
+## Files Changed Recently
+
+- `emails/password-reset.md` - revised user-facing copy
+
+## Verification
+
+- Not run yet.
+```
+
 ## Memory Model
 
 `STATE.md` and `HANDOFF.md` are current memory. They should be rewritten and compacted as work changes.
@@ -97,13 +178,18 @@ Do not load `WORKLOG.md` by default. Use it only when historical context is need
 
 Do not store:
 
-- secrets, tokens, passwords, or private keys
+- secrets
+- API keys
+- tokens, passwords, or private keys
+- private customer data
+- huge logs
+- temporary noise
+- full chat transcripts
 - raw logs
 - speculative notes
 - duplicate summaries
 - stale guesses
 - personal commentary
-- full chat transcripts
 - sensitive client, production, or operational details
 
 Use placeholders for examples. Store only context that helps the next agent work safely.
@@ -120,3 +206,18 @@ Keep the structure simple:
 - Add project-specific rules only when they are durable and useful.
 
 Avoid adding scripts, databases, dependencies, or automation unless your own project clearly needs them.
+
+## Recommended GitHub Topics
+
+Add these in GitHub repo settings:
+
+- `ai-agents`
+- `coding-agents`
+- `agent-memory`
+- `codex`
+- `claude-code`
+- `gemini`
+- `developer-tools`
+- `template`
+- `handoff`
+- `markdown`
