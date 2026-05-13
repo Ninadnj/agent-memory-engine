@@ -1,16 +1,22 @@
 # Lightweight AI Agent Memory Scaffold
 
-A lightweight Markdown memory and handoff scaffold for AI coding agents.
+A lightweight Markdown scaffold for AI coding agent context, memory, workflows,
+and handoffs.
 
 ## Repository Description
 
 Switch between AI coding agents without losing context, duplicating instructions, or
 loading unnecessary history.
 
+AI Agent Memory Scaffold is a lightweight Markdown-based context system for AI
+coding agents. It gives agents shared rules, project facts, current state,
+decisions, known issues, workflows, and handoff notes so they can continue work
+safely across sessions and tools.
+
 This repo is for developers who use tools like Codex, Claude Code, Gemini, or
 other coding agents in the same project. It gives agents a small set of files
-for project facts, current state, handoff notes, decisions, known issues, and
-compact work history.
+for shared behavior rules, project facts, current state, workflow guidance,
+handoff notes, decisions, known issues, and compact work history.
 
 It is not a framework. It does not run code, install dependencies, manage a
 database, or automate your workflow.
@@ -21,6 +27,9 @@ database, or automate your workflow.
 - People switching between Codex, Claude Code, Gemini, and similar tools.
 - Solo builders who need project continuity between sessions.
 - Teams that want safer AI handoffs.
+- People who want safer AI coding sessions and cleaner context between tools.
+- Teams that want repeatable agent workflows with less token waste.
+- Anyone who needs better continuity across AI coding agents.
 - Anyone tired of pasting the same context repeatedly.
 
 ## What Problem It Solves
@@ -28,11 +37,13 @@ database, or automate your workflow.
 AI coding agents often lose context when you switch tools or start a new session.
 The usual workaround is to paste long summaries or reload too much history.
 
-This scaffold keeps the important context in plain Markdown files so agents can
-read only what they need:
+This scaffold keeps the important working context in plain Markdown files so
+agents can read only what they need:
 
+- shared behavior rules
 - stable project facts
 - current active task
+- task-specific workflow guidance
 - next handoff step
 - durable decisions
 - unresolved issues
@@ -41,6 +52,18 @@ read only what they need:
 `AGENTS.md` remains the source of truth for agent behavior. The other files
 provide memory, prompts, and optional task workflows.
 
+## What This Repo Gives Agents
+
+- shared behavior rules through `AGENTS.md`
+- stable project facts through `PROJECT.md`
+- current work state through `STATE.md`
+- handoff notes through `HANDOFF.md`
+- durable decisions through `DECISIONS.md`
+- unresolved problems through `KNOWN_ISSUES.md`
+- compact history through `WORKLOG.md`
+- repeatable session flow through `commands/start.md` and `commands/end.md`
+- task-specific guidance through `workflows/`
+
 ## Why Not Just Use Chat History?
 
 Chat history is useful, but it is noisy, tool-specific, and hard to transfer
@@ -48,11 +71,12 @@ between agents.
 
 This scaffold keeps only the durable working context:
 
-- what the project is
-- what is being worked on
-- what changed
-- what decisions matter
-- what the next agent should do
+- project facts
+- active task
+- decisions
+- known issues
+- workflow rules
+- next steps
 
 It is not meant to replace chat history. It is meant to reduce dependency on it.
 
@@ -214,11 +238,11 @@ After copying, fill in `agent-memory/PROJECT.md`, clear or rewrite
 
 ## Memory Model
 
-`STATE.md` and `HANDOFF.md` are current memory. They should be rewritten and
-compacted as work changes.
+`STATE.md` and `HANDOFF.md` are current working context. They should be
+rewritten and compacted as work changes.
 
 `PROJECT.md`, `DECISIONS.md`, `KNOWN_ISSUES.md`, and `WORKLOG.md` are collected
-memory over time:
+context over time:
 
 - `PROJECT.md` stores only verified stable project facts.
 - `DECISIONS.md` stores only durable architecture, product, data, security, or
