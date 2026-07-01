@@ -1,5 +1,7 @@
 # Lightweight AI Agent Memory Scaffold
 
+> **Note:** this Markdown convention has evolved into a measured retrieval system — the [agent-memory-engine](../README.md) at the root of this repository. The scaffold below remains fully usable on its own.
+
 A lightweight Markdown scaffold for AI coding agent context, memory, workflows,
 and handoffs.
 

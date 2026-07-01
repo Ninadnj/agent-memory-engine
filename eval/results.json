@@ -1,0 +1,137 @@
+{
+  "k": 3,
+  "budget": 120,
+  "exact_tokenizer": false,
+  "embedder": "HashingEmbedder",
+  "n_memories": 14,
+  "n_tasks": 7,
+  "summary": {
+    "no_memory": {
+      "avg_context_tokens": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "token_reduction_vs_baseline": 100.0
+    },
+    "full_context": {
+      "avg_context_tokens": 550.0,
+      "precision": 0.102,
+      "recall": 1.0,
+      "token_reduction_vs_baseline": 0.0
+    },
+    "semantic_recall": {
+      "avg_context_tokens": 120.1,
+      "precision": 0.429,
+      "recall": 0.929,
+      "token_reduction_vs_baseline": 78.2
+    },
+    "budget_recall": {
+      "avg_context_tokens": 113.0,
+      "precision": 0.429,
+      "recall": 0.929,
+      "token_reduction_vs_baseline": 79.5
+    }
+  },
+  "per_task": [
+    {
+      "task": "task_1",
+      "query": "Fix the bug where customers receive two confirmation emails for a single booking.",
+      "gold": [
+        "mem_0005",
+        "mem_0013"
+      ],
+      "retrieved": [
+        "mem_0005",
+        "mem_0014",
+        "mem_0003"
+      ],
+      "recall": 0.5,
+      "tokens": 116
+    },
+    {
+      "task": "task_2",
+      "query": "Add rate limiting to the chat endpoint so the Gemini API key cannot be abused.",
+      "gold": [
+        "mem_0004",
+        "mem_0011"
+      ],
+      "retrieved": [
+        "mem_0011",
+        "mem_0004",
+        "mem_0010"
+      ],
+      "recall": 1.0,
+      "tokens": 131
+    },
+    {
+      "task": "task_3",
+      "query": "A booking shows the wrong time to the customer. Investigate how timezones are handled for bookings.",
+      "gold": [
+        "mem_0003"
+      ],
+      "retrieved": [
+        "mem_0003",
+        "mem_0005",
+        "mem_0014"
+      ],
+      "recall": 1.0,
+      "tokens": 116
+    },
+    {
+      "task": "task_4",
+      "query": "Update the list of services and prices the chatbot tells customers about.",
+      "gold": [
+        "mem_0004",
+        "mem_0012"
+      ],
+      "retrieved": [
+        "mem_0004",
+        "mem_0012",
+        "mem_0011"
+      ],
+      "recall": 1.0,
+      "tokens": 114
+    },
+    {
+      "task": "task_5",
+      "query": "Make the gallery images publicly viewable while keeping all other uploads private.",
+      "gold": [
+        "mem_0007"
+      ],
+      "retrieved": [
+        "mem_0007",
+        "mem_0005",
+        "mem_0014"
+      ],
+      "recall": 1.0,
+      "tokens": 128
+    },
+    {
+      "task": "task_6",
+      "query": "Add a new admin-only settings page and make sure it is protected like the other admin routes.",
+      "gold": [
+        "mem_0006"
+      ],
+      "retrieved": [
+        "mem_0006",
+        "mem_0010",
+        "mem_0012"
+      ],
+      "recall": 1.0,
+      "tokens": 103
+    },
+    {
+      "task": "task_7",
+      "query": "The chat widget sometimes crashes when Gemini replies. Make the chat resilient to bad responses.",
+      "gold": [
+        "mem_0008"
+      ],
+      "retrieved": [
+        "mem_0008",
+        "mem_0004",
+        "mem_0010"
+      ],
+      "recall": 1.0,
+      "tokens": 133
+    }
+  ]
+}

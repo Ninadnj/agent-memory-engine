@@ -1,0 +1,29 @@
+{
+  "name": "mr-studio-multisession",
+  "description": "A coding agent has worked across many sessions on the MR Studio web app and accumulated durable memories. Each task is a fresh session: the agent is about to do something and needs the relevant prior memories pulled into context. `relevant_ids` is the human-labeled gold set of memories that actually matter for that task.",
+  "memories": [
+    {"id": "mem_0001", "type": "project", "text": "The MR Studio web app is a React + Vite frontend with an Express backend, written in TypeScript. Run the dev server with `npm run dev` from the project root; it listens on port 5002."},
+    {"id": "mem_0002", "type": "project", "text": "The database is PostgreSQL accessed through the Drizzle ORM. The schema lives in shared/schema.ts and migrations are managed with drizzle-kit."},
+    {"id": "mem_0003", "type": "decision", "text": "Bookings are stored in UTC in the database and converted to the Asia/Tbilisi timezone only in the UI layer. Never persist local time."},
+    {"id": "mem_0004", "type": "decision", "text": "The customer chatbot uses Google Gemini (gemini-2.0-flash-exp). Its system prompt and the list of services and prices live in server/gemini-chat.ts."},
+    {"id": "mem_0005", "type": "issue", "text": "Known bug: the booking confirmation email sometimes sends twice because the email handler is not idempotent. Dedupe by tracking sent emails per booking id before retrying."},
+    {"id": "mem_0006", "type": "decision", "text": "Authentication uses signed session cookies via express-session. Admin routes are guarded by the requireAdmin middleware in server/auth.ts."},
+    {"id": "mem_0007", "type": "project", "text": "Uploaded images go to object storage; the ACL logic is in server/objectAcl.ts. Public read is allowed only for files under the gallery/ prefix; everything else stays private."},
+    {"id": "mem_0008", "type": "issue", "text": "Gemini occasionally returns an empty response. server/gemini-chat.ts must fall back to a default message instead of throwing, otherwise the chat widget crashes."},
+    {"id": "mem_0009", "type": "decision", "text": "Frontend styling uses Tailwind with custom CSS tokens defined in client/src/index.css. Do not hardcode hex colors inside components."},
+    {"id": "mem_0010", "type": "state", "text": "Currently implementing multilingual support for the chatbot (Georgian 'ka' and English 'en'); the language is passed from the client and selects which system prompt is used."},
+    {"id": "mem_0011", "type": "handoff", "text": "Next step: add rate limiting to the public chat endpoint /api/chat to prevent abuse of the Gemini API key. No limiter exists yet."},
+    {"id": "mem_0012", "type": "worklog", "text": "Replaced the old hardcoded services list on the landing page with data fetched from the /api/services endpoint."},
+    {"id": "mem_0013", "type": "project", "text": "Email notifications are sent through the helper in server/email-notifications.ts using the studio's SMTP credentials from environment variables."},
+    {"id": "mem_0014", "type": "decision", "text": "Calendar sync writes confirmed bookings to Google Calendar via server/google-calendar.ts using a service account; a sync failure must not block the booking from being saved."}
+  ],
+  "tasks": [
+    {"id": "task_1", "query": "Fix the bug where customers receive two confirmation emails for a single booking.", "relevant_ids": ["mem_0005", "mem_0013"]},
+    {"id": "task_2", "query": "Add rate limiting to the chat endpoint so the Gemini API key cannot be abused.", "relevant_ids": ["mem_0011", "mem_0004"]},
+    {"id": "task_3", "query": "A booking shows the wrong time to the customer. Investigate how timezones are handled for bookings.", "relevant_ids": ["mem_0003"]},
+    {"id": "task_4", "query": "Update the list of services and prices the chatbot tells customers about.", "relevant_ids": ["mem_0004", "mem_0012"]},
+    {"id": "task_5", "query": "Make the gallery images publicly viewable while keeping all other uploads private.", "relevant_ids": ["mem_0007"]},
+    {"id": "task_6", "query": "Add a new admin-only settings page and make sure it is protected like the other admin routes.", "relevant_ids": ["mem_0006"]},
+    {"id": "task_7", "query": "The chat widget sometimes crashes when Gemini replies. Make the chat resilient to bad responses.", "relevant_ids": ["mem_0008"]}
+  ]
+}
