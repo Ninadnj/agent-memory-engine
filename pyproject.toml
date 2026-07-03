@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-memory-engine"
-version = "0.1.0"
-description = "Semantic memory and handoffs for AI coding agents, with an MCP server and an evaluation harness."
+version = "0.2.0"
+description = "One shared memory for coding agents (Claude Code, Codex, Cursor) over MCP, with token-budgeted recall and an evaluation harness."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -19,6 +19,10 @@ real = ["sentence-transformers>=2.2", "tiktoken>=0.5"]
 # Model Context Protocol server so agents can call the engine as tools.
 mcp = ["mcp>=1.0"]
 dev = ["pytest>=7.0"]
+
+[project.urls]
+Repository = "https://github.com/Ninadnj/ai-agent-memory-scaffold"
+Issues = "https://github.com/Ninadnj/ai-agent-memory-scaffold/issues"
 
 [project.scripts]
 agent-memory = "agent_memory.cli:main"
