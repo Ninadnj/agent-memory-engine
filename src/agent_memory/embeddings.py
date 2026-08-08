@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sys
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -41,6 +42,10 @@ class Embedder(Protocol):
     """Anything that turns text into unit-norm vectors of a fixed dimension."""
 
     dim: int
+    # Cosine score below which a match should be treated as unrelated. Every
+    # embedder has its own scale, so this travels with the backend rather than
+    # being a single constant in the retrieval code.
+    recommended_min_score: float
 
     def embed(self, texts: list[str]) -> np.ndarray:  # (n, dim) float32
         ...
@@ -63,6 +68,14 @@ def _features(text: str) -> list[str]:
 
 class HashingEmbedder:
     """Deterministic feature-hashing embedder. No dependencies, no network."""
+
+    # Calibrated on eval/dataset.json: see the `min_score` sweep in
+    # eval/results.md. At 0.15 labelled recall is untouched while half the
+    # matches for off-topic queries are dropped. A higher floor cuts more noise
+    # on that benchmark, but the lowest-scoring gold memory in it sits at 0.13,
+    # so 0.15 is deliberately close to the observed floor of "genuinely
+    # relevant" rather than as aggressive as the sweep alone would allow.
+    recommended_min_score = 0.15
 
     def __init__(self, dim: int = 512) -> None:
         self.dim = dim
@@ -88,6 +101,12 @@ class HashingEmbedder:
 class SentenceTransformerEmbedder:
     """Real semantic embeddings. Optional: needs ``sentence-transformers``."""
 
+    # NOT calibrated in this repo — the offline benchmark runs on the hashing
+    # embedder, and MiniLM cosines sit on a higher scale (unrelated pairs often
+    # score 0.1-0.3). Treat this as a conservative starting point and measure on
+    # your own store before relying on it.
+    recommended_min_score = 0.25
+
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         from sentence_transformers import SentenceTransformer  # lazy import
 
@@ -102,15 +121,45 @@ class SentenceTransformerEmbedder:
         return vecs.astype(np.float32)
 
 
+def default_min_score(embedder: Embedder) -> float:
+    """Relevance floor to use for an agent-facing call.
+
+    ``AGENT_MEMORY_MIN_SCORE`` overrides; otherwise the backend's own
+    calibrated value is used. Library callers of ``MemoryStore.recall`` get no
+    floor unless they ask for one — this is applied at the CLI/MCP boundary,
+    where the caller is an agent that cannot see the scores.
+    """
+    override = os.environ.get("AGENT_MEMORY_MIN_SCORE")
+    if override is not None:
+        return float(override)
+    return float(getattr(embedder, "recommended_min_score", 0.0))
+
+
 def default_embedder() -> Embedder:
     """Prefer the real model when available; fall back to hashing.
 
-    Force the offline embedder with ``AGENT_MEMORY_EMBEDDER=hashing`` (CI does
-    this so results are byte-stable).
+    ``AGENT_MEMORY_EMBEDDER`` selects explicitly: ``hashing`` forces the offline
+    embedder (CI does this so results are byte-stable), ``sentence-transformers``
+    demands the real one and raises if it cannot be loaded. The default is
+    ``auto``, which tries the real model and warns — loudly, on stderr — before
+    falling back, because the two produce incompatible vectors and a silent
+    switch is how a store ends up half-embedded by each.
     """
-    if os.environ.get("AGENT_MEMORY_EMBEDDER", "").lower() != "hashing":
-        try:
-            return SentenceTransformerEmbedder()
-        except Exception:
-            pass
+    choice = os.environ.get("AGENT_MEMORY_EMBEDDER", "auto").lower()
+    if choice == "hashing":
+        return HashingEmbedder()
+    try:
+        return SentenceTransformerEmbedder()
+    except Exception as exc:
+        if choice in {"sentence-transformers", "sentence_transformers", "real"}:
+            raise RuntimeError(
+                f"AGENT_MEMORY_EMBEDDER={choice} but sentence-transformers could "
+                f'not be loaded: {exc}. Install it with: pip install "agent-memory-engine[real]"'
+            ) from exc
+        print(
+            f"[agent-memory] sentence-transformers unavailable ({exc.__class__.__name__}); "
+            "using the offline HashingEmbedder. Set AGENT_MEMORY_EMBEDDER=hashing to "
+            "silence this.",
+            file=sys.stderr,
+        )
     return HashingEmbedder()
