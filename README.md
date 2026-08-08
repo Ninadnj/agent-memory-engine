@@ -114,13 +114,98 @@ env = { AGENT_MEMORY_PATH = "~/.agent_memory/store.json", AGENT_MEMORY_AGENT = "
 
 Each memory now carries its origin (`[decision · claude-code]`, `[handoff · codex]`), and a handoff written in one tool is picked up by the next via `memory_boot`. Agents may run at the same time: writes take a lock, merge, and land atomically, and an already-running server picks up another agent's writes on its next read.
 
-## How it works
+## Architecture
 
-- **Pluggable embedder** ([embeddings.py](src/agent_memory/embeddings.py)) — a small `Embedder` protocol with two backends: a dependency-free, deterministic `HashingEmbedder` (default; runs offline and in CI) and a `SentenceTransformerEmbedder` for real semantic embeddings. Same API, swap by installing one package. Each carries its own calibrated relevance floor, because the two score on different scales.
-- **Vector store** ([store.py](src/agent_memory/store.py)) — exact brute-force cosine over a numpy matrix, JSON persistence, near-duplicate suppression on write, and greedy **budget packing**: recall walks results in relevance order and skips anything that would overflow the caller's token budget. An agent's memory is hundreds of entries, not millions, so this is instant and exact; FAISS/Chroma can slot behind the same API later.
-- **Durable writes** — every write takes a cross-process lock, re-reads anything another agent appended, and replaces the file atomically. A crash mid-write cannot truncate the store, and two agents writing at once cannot silently overwrite each other. Embeddings are stored as base64 float16, which keeps the file about 5× smaller than JSON float lists.
-- **MCP server** ([mcp_server.py](src/agent_memory/mcp_server.py)) — exposes `memory_boot`, `memory_recall`, `memory_write`, `memory_handoff`, `memory_list`, `memory_update`, `memory_forget` and `memory_stats` as agent tools.
-- **Evaluation harness** ([run_eval.py](eval/run_eval.py)) — measures token cost and retrieval precision/recall across five arms, including the random control and the hard-budget arm, plus the paraphrase gap, a store-growth scaling test and the relevance-floor sweep.
+Every agent talks to one local store. **MCP is the integration surface** — a stdio server each agent launches as a subprocess — and the CLI and Python API are thin alternatives onto the same engine.
+
+```mermaid
+flowchart TB
+    CC["Claude Code"]
+    CX["Codex CLI"]
+    CU["Cursor"]
+
+    MCP["MCP server — agent-memory-mcp<br/>stdio · 8 tools<br/>boot · write · handoff · recall<br/>list · update · forget · stats"]
+    CLI["CLI — agent-memory<br/>same operations, for humans and scripts"]
+    PY["Python API — import agent_memory"]
+
+    GUARD["Context guards<br/>relevance floor + token budget<br/>applied where the caller cannot see scores"]
+    CORE["MemoryStore — store.py<br/>write · recall · boot · update · forget"]
+
+    EMB["Embedder — embeddings.py<br/>HashingEmbedder default, offline<br/>SentenceTransformer optional"]
+    TOK["Token counter — tokens.py<br/>tiktoken, or an approximation"]
+    DISK[("store.json<br/>one file per project<br/>lock · merge · atomic replace")]
+
+    CC -->|stdio| MCP
+    CX -->|stdio| MCP
+    CU -->|stdio| MCP
+
+    MCP --> GUARD
+    CLI --> GUARD
+    GUARD --> CORE
+    PY --> CORE
+
+    CORE --> EMB
+    CORE --> TOK
+    CORE --> DISK
+```
+
+The guards sit between the tools and the store on purpose. Tool output is compact — no scores, no timestamps — because everything a memory tool returns is paid for again in the calling agent's context window. That means the agent *cannot* judge relevance for itself, so the floor and the budget are enforced before anything is handed back.
+
+| Module | Responsibility |
+| --- | --- |
+| [`mcp_server.py`](src/agent_memory/mcp_server.py) | MCP tools over stdio. Works with `mcp` 1.x and 2.x. |
+| [`cli.py`](src/agent_memory/cli.py) | The same operations as shell commands. |
+| [`store.py`](src/agent_memory/store.py) | Retrieval, budget packing, durability, the on-disk format. |
+| [`embeddings.py`](src/agent_memory/embeddings.py) | `Embedder` protocol, two backends, per-backend relevance floor. |
+| [`tokens.py`](src/agent_memory/tokens.py) | Token accounting — the unit the budget is denominated in. |
+| [`eval/run_eval.py`](eval/run_eval.py) | Five-arm benchmark, paraphrase gap, scaling test, floor sweep. |
+
+### The recall path
+
+Retrieval is exact brute-force cosine over a numpy matrix — an agent's memory for one project is hundreds of entries, not millions, so this is instant and exact. FAISS or Chroma can slot in behind the same API if a store ever outgrows it.
+
+```mermaid
+flowchart LR
+    A["Task text"] --> B["Embed query"]
+    B --> C["Cosine against<br/>every memory"]
+    C --> D["Sort by score"]
+    D --> E{"score ≥ min_score?"}
+    E -->|no| X["Dropped — noise"]
+    E -->|yes| F{"fits in remaining<br/>token budget?"}
+    F -->|no| Y["Skipped — try the<br/>next best"]
+    F -->|yes| G["Include,<br/>subtract its tokens"]
+    G --> H["≤ k memories,<br/>≤ budget tokens"]
+```
+
+Budget packing is greedy rather than all-or-nothing: an entry that would overflow the remaining budget is skipped and a smaller, lower-ranked one gets its chance. `memory_boot` spends one budget across both the handoff and the recalled memories, so the total is capped whatever the store contains.
+
+### The write path
+
+The store is a single JSON file, but writes are careful, because the whole point is that several agents share it.
+
+```mermaid
+sequenceDiagram
+    participant CC as Claude Code
+    participant L as store.json.lock
+    participant F as store.json
+    participant CX as Codex CLI
+
+    CC->>L: acquire (exclusive create)
+    CX->>L: acquire — blocks
+    CC->>F: re-read anything appended since
+    Note over CC: dedup, assign id, embed
+    CC->>F: write temp file, then os.replace
+    CC->>L: release
+    CX->>L: acquired
+    CX->>F: re-read — sees Claude Code's memory
+    CX->>F: append its own, atomically
+    CX->>L: release
+```
+
+- **No lost updates.** A write re-reads the file under the lock, so an agent that has been idle for an hour still appends rather than overwrites. Verified with 8 processes writing concurrently.
+- **No torn files.** The new contents land via `os.replace`, which is atomic — a crash mid-write leaves the previous store intact, never a truncated one.
+- **Fresh reads.** A long-running MCP server reloads when the file changes on disk, so it sees another agent's writes without a restart.
+- **Compact.** Embeddings are stored as base64 float16, roughly 5× smaller than JSON float lists.
 
 ### Relevance floor
 
