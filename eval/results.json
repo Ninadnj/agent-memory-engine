@@ -1,7 +1,8 @@
 {
   "k": 3,
   "budget": 120,
-  "exact_tokenizer": false,
+  "seed": 0,
+  "exact_tokenizer": true,
   "embedder": "HashingEmbedder",
   "n_memories": 14,
   "n_tasks": 7,
@@ -13,22 +14,28 @@
       "token_reduction_vs_baseline": 100.0
     },
     "full_context": {
-      "avg_context_tokens": 550.0,
+      "avg_context_tokens": 424.0,
       "precision": 0.102,
       "recall": 1.0,
       "token_reduction_vs_baseline": 0.0
     },
-    "semantic_recall": {
-      "avg_context_tokens": 120.1,
+    "random_k": {
+      "avg_context_tokens": 93.4,
+      "precision": 0.048,
+      "recall": 0.071,
+      "token_reduction_vs_baseline": 78.0
+    },
+    "retrieval": {
+      "avg_context_tokens": 93.3,
       "precision": 0.429,
       "recall": 0.929,
-      "token_reduction_vs_baseline": 78.2
+      "token_reduction_vs_baseline": 78.0
     },
     "budget_recall": {
-      "avg_context_tokens": 113.0,
+      "avg_context_tokens": 93.3,
       "precision": 0.429,
       "recall": 0.929,
-      "token_reduction_vs_baseline": 79.5
+      "token_reduction_vs_baseline": 78.0
     }
   },
   "per_task": [
@@ -45,7 +52,7 @@
         "mem_0003"
       ],
       "recall": 0.5,
-      "tokens": 116
+      "tokens": 92
     },
     {
       "task": "task_2",
@@ -60,7 +67,7 @@
         "mem_0010"
       ],
       "recall": 1.0,
-      "tokens": 131
+      "tokens": 101
     },
     {
       "task": "task_3",
@@ -74,7 +81,7 @@
         "mem_0014"
       ],
       "recall": 1.0,
-      "tokens": 116
+      "tokens": 92
     },
     {
       "task": "task_4",
@@ -89,7 +96,7 @@
         "mem_0011"
       ],
       "recall": 1.0,
-      "tokens": 114
+      "tokens": 86
     },
     {
       "task": "task_5",
@@ -103,7 +110,7 @@
         "mem_0014"
       ],
       "recall": 1.0,
-      "tokens": 128
+      "tokens": 99
     },
     {
       "task": "task_6",
@@ -117,7 +124,7 @@
         "mem_0012"
       ],
       "recall": 1.0,
-      "tokens": 103
+      "tokens": 80
     },
     {
       "task": "task_7",
@@ -131,7 +138,75 @@
         "mem_0010"
       ],
       "recall": 1.0,
-      "tokens": 133
+      "tokens": 103
+    }
+  ],
+  "phrasing": {
+    "query": {
+      "recall": 0.929,
+      "avg_query_word_overlap_with_gold": 0.403
+    },
+    "paraphrase": {
+      "recall": 0.429,
+      "avg_query_word_overlap_with_gold": 0.032
+    }
+  },
+  "scaling": [
+    {
+      "n_memories": 14,
+      "full_context_tokens": 424,
+      "budget_recall_tokens": 93.3,
+      "budget_recall": 0.929
+    },
+    {
+      "n_memories": 34,
+      "full_context_tokens": 805,
+      "budget_recall_tokens": 87.4,
+      "budget_recall": 0.929
+    },
+    {
+      "n_memories": 54,
+      "full_context_tokens": 1159,
+      "budget_recall_tokens": 82.1,
+      "budget_recall": 0.929
+    }
+  ],
+  "min_score_sweep": [
+    {
+      "min_score": 0.0,
+      "labelled_recall": 0.929,
+      "off_topic_memories_returned": 12,
+      "off_topic_max": 12
+    },
+    {
+      "min_score": 0.05,
+      "labelled_recall": 0.929,
+      "off_topic_memories_returned": 12,
+      "off_topic_max": 12
+    },
+    {
+      "min_score": 0.1,
+      "labelled_recall": 0.929,
+      "off_topic_memories_returned": 10,
+      "off_topic_max": 12
+    },
+    {
+      "min_score": 0.15,
+      "labelled_recall": 0.929,
+      "off_topic_memories_returned": 6,
+      "off_topic_max": 12
+    },
+    {
+      "min_score": 0.2,
+      "labelled_recall": 0.929,
+      "off_topic_memories_returned": 2,
+      "off_topic_max": 12
+    },
+    {
+      "min_score": 0.25,
+      "labelled_recall": 0.929,
+      "off_topic_memories_returned": 2,
+      "off_topic_max": 12
     }
   ]
 }

@@ -4,6 +4,9 @@
     agent-memory recall "how are timezones handled" -k 3 --budget 200
     agent-memory handoff --done "Fixed double emails." --next "Add rate limiting."
     agent-memory boot "continue the booking bug fix"
+    agent-memory list --type decision
+    agent-memory update mem_0003 "Bookings are stored in UTC; UI converts."
+    agent-memory forget mem_0007
     agent-memory stats
 
 Uses a JSON store at $AGENT_MEMORY_PATH (default ~/.agent_memory/store.json).
@@ -17,6 +20,7 @@ import argparse
 import os
 from pathlib import Path
 
+from .embeddings import default_min_score
 from .store import MEMORY_TYPES, MemoryStore
 
 DEFAULT_STORE = Path(
@@ -24,9 +28,18 @@ DEFAULT_STORE = Path(
 ).expanduser()
 DEFAULT_AGENT = os.environ.get("AGENT_MEMORY_AGENT", "")
 
+# Sentinel: resolved per-embedder once the store is open (see default_min_score).
+AUTO_MIN_SCORE = -1.0
+
 
 def _store(args) -> MemoryStore:
     return MemoryStore(path=args.path)
+
+
+def _min_score(args, store: MemoryStore) -> float:
+    if getattr(args, "min_score", AUTO_MIN_SCORE) != AUTO_MIN_SCORE:
+        return args.min_score
+    return default_min_score(store.embedder)
 
 
 def _tag(entry) -> str:
@@ -34,14 +47,25 @@ def _tag(entry) -> str:
 
 
 def cmd_write(args) -> None:
-    entry = _store(args).write(args.text, type=args.type, agent=args.agent)
-    print(f"Saved {entry.id} ({entry.type}).")
+    entry, stored = _store(args).write_with_status(
+        args.text, type=args.type, agent=args.agent
+    )
+    if stored:
+        print(f"Saved {entry.id} ({entry.type}).")
+    else:
+        print(f"Not saved — near-duplicate of {entry.id}: {entry.text}")
 
 
 def cmd_recall(args) -> None:
-    hits = _store(args).recall(args.query, k=args.k, budget_tokens=args.budget)
+    store = _store(args)
+    hits = store.recall(
+        args.query,
+        k=args.k,
+        budget_tokens=args.budget,
+        min_score=_min_score(args, store),
+    )
     if not hits:
-        print("No memories yet.")
+        print("No relevant memories.")
         return
     for h in hits:
         print(f"{h.score:.2f}  [{_tag(h.entry)}] {h.entry.text}")
@@ -51,23 +75,43 @@ def cmd_handoff(args) -> None:
     text = f"Done: {args.done} Next: {args.next}"
     if args.watch_out:
         text += f" Watch out: {args.watch_out}"
-    entry = _store(args).write(text, type="handoff", agent=args.agent)
-    print(f"Handoff saved ({entry.id}).")
+    entry, stored = _store(args).write_with_status(
+        text, type="handoff", agent=args.agent
+    )
+    if stored:
+        print(f"Handoff saved ({entry.id}).")
+    else:
+        print(f"Identical handoff already stored as {entry.id}; nothing written.")
 
 
 def cmd_boot(args) -> None:
     store = _store(args)
-    handoff = store.latest("handoff")
-    remaining = args.budget
+    handoff, hits = store.boot(
+        args.task, k=5, budget_tokens=args.budget, min_score=_min_score(args, store)
+    )
     if handoff is not None:
         print(f"Last handoff [{_tag(handoff)}]: {handoff.text}")
-        if remaining is not None:
-            remaining = max(0, remaining - handoff.tokens)
-    hits = store.recall(args.task, k=5, budget_tokens=remaining)
     for h in hits:
-        if handoff is not None and h.entry.id == handoff.id:
-            continue
         print(f"- [{_tag(h.entry)}] {h.entry.text}")
+
+
+def cmd_list(args) -> None:
+    entries = [e for e in reversed(_store(args).all()) if not args.type or e.type == args.type]
+    if not entries:
+        print("No memories stored.")
+        return
+    for e in entries[: args.limit]:
+        print(f"{e.id}  [{_tag(e)}] {e.text}")
+
+
+def cmd_update(args) -> None:
+    entry = _store(args).update(args.id, text=args.text)
+    print(f"Updated {entry.id}." if entry else f"No memory with id {args.id}.")
+
+
+def cmd_forget(args) -> None:
+    ok = _store(args).forget(args.id)
+    print(f"Forgot {args.id}." if ok else f"No memory with id {args.id}.")
 
 
 def cmd_stats(args) -> None:
@@ -92,6 +136,14 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("query")
     r.add_argument("-k", type=int, default=5)
     r.add_argument("--budget", type=int, default=None, help="max context tokens")
+    r.add_argument(
+        "--min-score",
+        type=float,
+        default=AUTO_MIN_SCORE,
+        dest="min_score",
+        help="drop matches weaker than this cosine score (0 disables; "
+        "default is calibrated per embedder)",
+    )
     r.set_defaults(func=cmd_recall)
 
     h = sub.add_parser("handoff", help="save a handoff for the next agent")
@@ -103,7 +155,24 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("boot", help="latest handoff + relevant memories")
     b.add_argument("task")
     b.add_argument("--budget", type=int, default=300, help="max context tokens")
+    b.add_argument(
+        "--min-score", type=float, default=AUTO_MIN_SCORE, dest="min_score"
+    )
     b.set_defaults(func=cmd_boot)
+
+    ls = sub.add_parser("list", help="list memories with their ids")
+    ls.add_argument("--type", default="", choices=[""] + sorted(MEMORY_TYPES))
+    ls.add_argument("--limit", type=int, default=20)
+    ls.set_defaults(func=cmd_list)
+
+    u = sub.add_parser("update", help="replace the text of a memory")
+    u.add_argument("id")
+    u.add_argument("text")
+    u.set_defaults(func=cmd_update)
+
+    f = sub.add_parser("forget", help="delete a memory that is wrong or stale")
+    f.add_argument("id")
+    f.set_defaults(func=cmd_forget)
 
     s = sub.add_parser("stats", help="show store stats")
     s.set_defaults(func=cmd_stats)

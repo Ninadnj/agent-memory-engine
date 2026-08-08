@@ -68,6 +68,89 @@ def test_budget_recall_skips_oversized_and_packs_smaller(store):
     assert all(len(t) < 500 for t in texts), "oversized entry must be skipped"
 
 
+def test_recall_can_exclude_an_entry(store):
+    excluded = store.all()[0]
+    hits = store.recall("bookings UTC", k=3, exclude_ids={excluded.id})
+    assert all(hit.entry.id != excluded.id for hit in hits)
+
+
+def test_boot_shares_one_budget_between_handoff_and_recall(store):
+    handoff = store.write(
+        "Done: fixed email retries. Next: protect admin routes.",
+        type="handoff",
+        agent="claude-code",
+    )
+    budget = handoff.tokens + 20
+
+    included_handoff, hits = store.boot(
+        "protect admin routes",
+        k=5,
+        budget_tokens=budget,
+    )
+
+    assert included_handoff == handoff
+    assert handoff.tokens + sum(hit.entry.tokens for hit in hits) <= budget
+    assert all(hit.entry.id != handoff.id for hit in hits)
+
+
+def test_boot_skips_handoff_that_cannot_fit(store):
+    oversized = store.write(
+        ("long handoff " * 100) + "next deploy safely",
+        type="handoff",
+        agent="claude-code",
+    )
+    budget = 25
+
+    included_handoff, hits = store.boot(
+        "protect admin routes",
+        k=5,
+        budget_tokens=budget,
+    )
+
+    assert oversized.tokens > budget
+    assert included_handoff is None
+    assert sum(hit.entry.tokens for hit in hits) <= budget
+    assert all(hit.entry.id != oversized.id for hit in hits)
+
+
+def test_min_score_drops_unrelated_matches(store):
+    """Without a floor, a query about nothing in the store still returns k
+    memories — and the MCP layer hides the scores, so the agent can't tell."""
+    assert store.recall("how do I bake sourdough bread at home", k=3) != []
+    assert store.recall("how do I bake sourdough bread at home", k=3, min_score=0.15) == []
+
+
+def test_min_score_keeps_genuine_matches(store):
+    hits = store.recall("how do we protect admin pages", k=3, min_score=0.15)
+    assert hits and hits[0].entry.text.startswith("Admin routes")
+
+
+def test_write_with_status_reports_whether_it_stored(store):
+    text = "Deploys go out through GitHub Actions on every push to main."
+    entry, stored = store.write_with_status(text, type="decision")
+    assert stored is True
+    same, stored_again = store.write_with_status(text, type="decision")
+    assert stored_again is False and same.id == entry.id
+
+
+def test_forget_removes_the_entry_from_recall(store):
+    entry = store.write("A stale note about the retired staging box.", type="state")
+    assert store.forget(entry.id) is True
+    assert all(h.entry.id != entry.id for h in store.recall("staging box", k=5))
+    assert store.forget(entry.id) is False
+
+
+def test_update_changes_text_and_ranking(store):
+    entry = store.write("The API listens on port 5002.", type="project")
+    updated = store.update(entry.id, text="The API listens on port 8080.")
+    assert updated is not None and "8080" in updated.text
+    assert "8080" in store.recall("which port does the API listen on", k=1)[0].entry.text
+
+
+def test_update_returns_none_for_unknown_id(store):
+    assert store.update("mem_9999", text="whatever") is None
+
+
 def test_agent_attribution_roundtrip(tmp_path):
     from agent_memory import HashingEmbedder, MemoryStore
 

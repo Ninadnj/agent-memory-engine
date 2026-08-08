@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-memory-engine"
-version = "0.2.0"
+version = "0.3.0"
 description = "One shared memory for coding agents (Claude Code, Codex, Cursor) over MCP, with token-budgeted recall and an evaluation harness."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,8 +17,12 @@ dependencies = ["numpy>=1.24"]
 # Real semantic embeddings + exact token accounting. Drop-in, no code change.
 real = ["sentence-transformers>=2.2", "tiktoken>=0.5"]
 # Model Context Protocol server so agents can call the engine as tools.
+# Both the 1.x (FastMCP) and 2.x (MCPServer) APIs are supported.
 mcp = ["mcp>=1.0"]
-dev = ["pytest>=7.0"]
+# `dev` pulls in mcp and tiktoken on purpose: the MCP server is the headline
+# feature and must be exercised in CI, and pinning the tokenizer is what makes
+# the published evaluation numbers reproducible rather than approximate.
+dev = ["pytest>=7.0", "mcp>=1.0", "tiktoken>=0.5"]
 
 [project.urls]
 Repository = "https://github.com/Ninadnj/ai-agent-memory-scaffold"
