@@ -18,22 +18,39 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 from .embeddings import default_min_score
-from .store import MEMORY_TYPES, MemoryStore
+from .store import (
+    GLOBAL_STORE,
+    MEMORY_TYPES,
+    MemoryStore,
+    default_store_path,
+    relocation_notice,
+)
 
-DEFAULT_STORE = Path(
-    os.environ.get("AGENT_MEMORY_PATH", "~/.agent_memory/store.json")
-).expanduser()
 DEFAULT_AGENT = os.environ.get("AGENT_MEMORY_AGENT", "")
 
 # Sentinel: resolved per-embedder once the store is open (see default_min_score).
 AUTO_MIN_SCORE = -1.0
 
 
+def _resolve_path(args) -> Path:
+    """Explicit --path, then --global, then the project/global default."""
+    if args.path is not None:
+        return Path(args.path).expanduser()
+    if getattr(args, "use_global", False):
+        return GLOBAL_STORE
+    path = default_store_path()
+    notice = relocation_notice(path)
+    if notice:
+        print(notice, file=sys.stderr)
+    return path
+
+
 def _store(args) -> MemoryStore:
-    return MemoryStore(path=args.path)
+    return MemoryStore(path=_resolve_path(args))
 
 
 def _min_score(args, store: MemoryStore) -> float:
@@ -115,7 +132,9 @@ def cmd_forget(args) -> None:
 
 
 def cmd_stats(args) -> None:
-    s = _store(args).stats()
+    path = _resolve_path(args)
+    s = MemoryStore(path=path).stats()
+    print(f"store: {path}")
     print(f"{s['count']} memories | {s['total_tokens']} tokens | {s['embedder']}")
     for t, n in sorted(s["by_type"].items()):
         print(f"  {t}: {n}")
@@ -123,7 +142,18 @@ def cmd_stats(args) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-memory")
-    parser.add_argument("--path", type=Path, default=DEFAULT_STORE)
+    parser.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help="store file (default: this project's .agent_memory/store.json)",
+    )
+    parser.add_argument(
+        "--global",
+        dest="use_global",
+        action="store_true",
+        help=f"use the cross-project store at {GLOBAL_STORE}",
+    )
     parser.add_argument("--agent", default=DEFAULT_AGENT, help="who is writing")
     sub = parser.add_subparsers(dest="command", required=True)
 

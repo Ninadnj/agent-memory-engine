@@ -3,7 +3,7 @@
   "budget": 120,
   "seed": 0,
   "exact_tokenizer": true,
-  "embedder": "HashingEmbedder",
+  "embedder": "SentenceTransformerEmbedder",
   "n_memories": 14,
   "n_tasks": 7,
   "summary": {
@@ -26,15 +26,15 @@
       "token_reduction_vs_baseline": 78.0
     },
     "retrieval": {
-      "avg_context_tokens": 93.3,
-      "precision": 0.429,
-      "recall": 0.929,
+      "avg_context_tokens": 93.4,
+      "precision": 0.381,
+      "recall": 0.857,
       "token_reduction_vs_baseline": 78.0
     },
     "budget_recall": {
-      "avg_context_tokens": 93.3,
-      "precision": 0.429,
-      "recall": 0.929,
+      "avg_context_tokens": 93.4,
+      "precision": 0.381,
+      "recall": 0.857,
       "token_reduction_vs_baseline": 78.0
     }
   },
@@ -49,10 +49,10 @@
       "retrieved": [
         "mem_0005",
         "mem_0014",
-        "mem_0003"
+        "mem_0008"
       ],
       "recall": 0.5,
-      "tokens": 92
+      "tokens": 94
     },
     {
       "task": "task_2",
@@ -64,10 +64,10 @@
       "retrieved": [
         "mem_0011",
         "mem_0004",
-        "mem_0010"
+        "mem_0008"
       ],
       "recall": 1.0,
-      "tokens": 101
+      "tokens": 96
     },
     {
       "task": "task_3",
@@ -92,11 +92,11 @@
       ],
       "retrieved": [
         "mem_0004",
-        "mem_0012",
-        "mem_0011"
+        "mem_0011",
+        "mem_0010"
       ],
-      "recall": 1.0,
-      "tokens": 86
+      "recall": 0.5,
+      "tokens": 101
     },
     {
       "task": "task_5",
@@ -106,11 +106,11 @@
       ],
       "retrieved": [
         "mem_0007",
-        "mem_0005",
+        "mem_0011",
         "mem_0014"
       ],
       "recall": 1.0,
-      "tokens": 99
+      "tokens": 95
     },
     {
       "task": "task_6",
@@ -120,8 +120,8 @@
       ],
       "retrieved": [
         "mem_0006",
-        "mem_0010",
-        "mem_0012"
+        "mem_0012",
+        "mem_0007"
       ],
       "recall": 1.0,
       "tokens": 80
@@ -134,20 +134,20 @@
       ],
       "retrieved": [
         "mem_0008",
-        "mem_0004",
-        "mem_0010"
+        "mem_0011",
+        "mem_0004"
       ],
       "recall": 1.0,
-      "tokens": 103
+      "tokens": 96
     }
   ],
   "phrasing": {
     "query": {
-      "recall": 0.929,
+      "recall": 0.857,
       "avg_query_word_overlap_with_gold": 0.403
     },
     "paraphrase": {
-      "recall": 0.429,
+      "recall": 0.786,
       "avg_query_word_overlap_with_gold": 0.032
     }
   },
@@ -155,74 +155,74 @@
     {
       "n_memories": 14,
       "full_context_tokens": 424,
-      "budget_recall_tokens": 93.3,
-      "budget_recall": 0.929
+      "budget_recall_tokens": 93.4,
+      "budget_recall": 0.857
     },
     {
       "n_memories": 34,
       "full_context_tokens": 805,
-      "budget_recall_tokens": 87.4,
-      "budget_recall": 0.929
+      "budget_recall_tokens": 87.3,
+      "budget_recall": 0.857
     },
     {
       "n_memories": 54,
       "full_context_tokens": 1159,
-      "budget_recall_tokens": 82.1,
-      "budget_recall": 0.929
+      "budget_recall_tokens": 86.3,
+      "budget_recall": 0.857
     }
   ],
   "min_score_sweep": [
     {
       "min_score": 0.0,
-      "labelled_recall": 0.929,
+      "labelled_recall": 0.857,
       "off_topic_memories_returned": 12,
       "off_topic_max": 12
     },
     {
       "min_score": 0.05,
-      "labelled_recall": 0.929,
-      "off_topic_memories_returned": 12,
-      "off_topic_max": 12
-    },
-    {
-      "min_score": 0.1,
-      "labelled_recall": 0.929,
+      "labelled_recall": 0.857,
       "off_topic_memories_returned": 10,
       "off_topic_max": 12
     },
     {
-      "min_score": 0.15,
-      "labelled_recall": 0.929,
-      "off_topic_memories_returned": 6,
-      "off_topic_max": 12
-    },
-    {
-      "min_score": 0.2,
-      "labelled_recall": 0.929,
-      "off_topic_memories_returned": 2,
-      "off_topic_max": 12
-    },
-    {
-      "min_score": 0.25,
-      "labelled_recall": 0.929,
-      "off_topic_memories_returned": 2,
-      "off_topic_max": 12
-    },
-    {
-      "min_score": 0.3,
-      "labelled_recall": 0.714,
+      "min_score": 0.1,
+      "labelled_recall": 0.857,
       "off_topic_memories_returned": 1,
       "off_topic_max": 12
     },
     {
+      "min_score": 0.15,
+      "labelled_recall": 0.857,
+      "off_topic_memories_returned": 0,
+      "off_topic_max": 12
+    },
+    {
+      "min_score": 0.2,
+      "labelled_recall": 0.857,
+      "off_topic_memories_returned": 0,
+      "off_topic_max": 12
+    },
+    {
+      "min_score": 0.25,
+      "labelled_recall": 0.857,
+      "off_topic_memories_returned": 0,
+      "off_topic_max": 12
+    },
+    {
+      "min_score": 0.3,
+      "labelled_recall": 0.857,
+      "off_topic_memories_returned": 0,
+      "off_topic_max": 12
+    },
+    {
       "min_score": 0.35,
-      "labelled_recall": 0.571,
+      "labelled_recall": 0.857,
       "off_topic_memories_returned": 0,
       "off_topic_max": 12
     },
     {
       "min_score": 0.4,
-      "labelled_recall": 0.5,
+      "labelled_recall": 0.714,
       "off_topic_memories_returned": 0,
       "off_topic_max": 12
     }

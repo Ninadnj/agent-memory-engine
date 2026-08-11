@@ -49,6 +49,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from agent_memory import HashingEmbedder, MemoryStore, count_tokens  # noqa: E402
 from agent_memory.tokens import using_exact_tokenizer  # noqa: E402
 
+EMBEDDER_CHOICES = ("hashing", "sentence-transformers")
+
 ARM_LABELS = {
     "no_memory": "No memory (control)",
     "full_context": "Full context (baseline — load every memory)",
@@ -75,18 +77,29 @@ def mean(xs: list[float]) -> float:
     return sum(xs) / len(xs) if xs else 0.0
 
 
-def build_store(memories: list[dict]) -> MemoryStore:
+def make_embedder(name: str):
+    """Build an embedder by name, so the same benchmark can score both."""
+    if name == "hashing":
+        return HashingEmbedder()
+    from agent_memory import SentenceTransformerEmbedder
+
+    return SentenceTransformerEmbedder()
+
+
+def build_store(memories: list[dict], embedder=None) -> MemoryStore:
     # Explicit embedder: the published numbers are the offline one's, and we do
     # not want them to change silently on a machine with sentence-transformers.
-    store = MemoryStore(embedder=HashingEmbedder())
+    store = MemoryStore(embedder=embedder or HashingEmbedder())
     for m in memories:
         store.write(m["text"], type=m["type"], id=m["id"])
     return store
 
 
-def evaluate(dataset: dict, k: int = 3, budget: int = 120, seed: int = 0) -> dict:
+def evaluate(
+    dataset: dict, k: int = 3, budget: int = 120, seed: int = 0, embedder=None
+) -> dict:
     memories = dataset["memories"]
-    store = build_store(memories)
+    store = build_store(memories, embedder)
     rng = random.Random(seed)
 
     all_ids = [m["id"] for m in memories]
@@ -159,19 +172,19 @@ def evaluate(dataset: dict, k: int = 3, budget: int = 120, seed: int = 0) -> dic
         "n_tasks": len(dataset["tasks"]),
         "summary": summary,
         "per_task": per_task,
-        "phrasing": phrasing_gap(dataset, k=k),
-        "scaling": scaling(dataset, k=k, budget=budget),
-        "min_score_sweep": min_score_sweep(dataset, k=k),
+        "phrasing": phrasing_gap(dataset, k=k, embedder=embedder),
+        "scaling": scaling(dataset, k=k, budget=budget, embedder=embedder),
+        "min_score_sweep": min_score_sweep(dataset, k=k, embedder=embedder),
     }
 
 
-def phrasing_gap(dataset: dict, k: int = 3) -> dict:
+def phrasing_gap(dataset: dict, k: int = 3, embedder=None) -> dict:
     """Recall on the developer phrasing vs an outsider's paraphrase.
 
     The default embedder matches shared wording. This is the number that says
     how much of the headline recall comes from the benchmark's phrasing.
     """
-    store = build_store(dataset["memories"])
+    store = build_store(dataset["memories"], embedder)
     out = {}
     for field in ("query", "paraphrase"):
         recalls, overlaps = [], []
@@ -206,7 +219,7 @@ def _word_overlap(query: str, memories: list[dict], gold: set[str]) -> float:
     return len(words & gold_words) / len(words)
 
 
-def scaling(dataset: dict, k: int = 3, budget: int = 120) -> list[dict]:
+def scaling(dataset: dict, k: int = 3, budget: int = 120, embedder=None) -> list[dict]:
     """Grow the store with distractors and re-measure.
 
     "The cost of memory stays fixed as the store grows" is a claim about a store
@@ -220,7 +233,7 @@ def scaling(dataset: dict, k: int = 3, budget: int = 120) -> list[dict]:
             {"id": f"dis_{i:04d}", "type": d["type"], "text": d["text"]}
             for i, d in enumerate(distractors[:extra])
         ]
-        store = build_store(memories)
+        store = build_store(memories, embedder)
         full_tokens = sum(count_tokens(m["text"]) for m in memories)
         recalls, tokens = [], []
         for task in dataset["tasks"]:
@@ -240,13 +253,13 @@ def scaling(dataset: dict, k: int = 3, budget: int = 120) -> list[dict]:
     return rows
 
 
-def min_score_sweep(dataset: dict, k: int = 3) -> list[dict]:
+def min_score_sweep(dataset: dict, k: int = 3, embedder=None) -> list[dict]:
     """Calibrate the relevance floor used by the CLI and MCP server.
 
     Labelled recall on real queries must not drop, while queries about things
     the store knows nothing about should return nothing at all.
     """
-    store = build_store(dataset["memories"])
+    store = build_store(dataset["memories"], embedder)
     off_topic = [
         "how do I bake sourdough bread at home",
         "what is the capital of Peru",
@@ -254,7 +267,7 @@ def min_score_sweep(dataset: dict, k: int = 3) -> list[dict]:
         "best hiking boots for winter walking",
     ]
     rows = []
-    for threshold in (0.0, 0.05, 0.10, 0.15, 0.20, 0.25):
+    for threshold in (0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40):
         recalls = []
         for task in dataset["tasks"]:
             gold = set(task["relevant_ids"])
@@ -327,13 +340,23 @@ def render_markdown(results: dict) -> str:
                 f"| {label} | {row['avg_query_word_overlap_with_gold']:.0%} | "
                 f"{row['recall']:.2f} |"
             )
+    gap = ph["query"]["recall"] - ph["paraphrase"]["recall"]
+    if results["embedder"] == "HashingEmbedder":
+        verdict = (
+            "The default embedder is feature hashing — lexical, not semantic. When "
+            f"the query stops sharing words with the memory, recall drops by "
+            f"**{gap:.2f}**. That gap is the honest limit of the offline default, "
+            "and the reason the optional `sentence-transformers` backend exists."
+        )
+    else:
+        verdict = (
+            f"This backend embeds meaning rather than wording, so the drop is only "
+            f"**{gap:.2f}**. It is the reason to install the `real` extra for day-to-day "
+            "use: real questions rarely reuse the words a memory was written in."
+        )
     lines += [
         "",
-        "The default embedder is feature hashing — lexical, not semantic. When the "
-        "query stops sharing words with the memory, recall drops by "
-        f"**{(ph['query']['recall'] - ph['paraphrase']['recall']):.2f}**. That gap is "
-        "the honest limit of the offline default, and the reason the optional "
-        "`sentence-transformers` backend exists.",
+        verdict,
         "",
         "## Does the cost stay flat as the store grows?",
         "",
@@ -365,8 +388,8 @@ def render_markdown(results: dict) -> str:
         "",
         "Four deliberately off-topic queries stand in for a task the store knows "
         "nothing about. Without a floor the engine returns k memories anyway, and "
-        "the MCP layer strips scores, so the agent cannot tell. `HashingEmbedder."
-        "recommended_min_score` is set from this sweep.",
+        "the MCP layer strips scores, so the agent cannot tell. "
+        f"`{results['embedder']}.recommended_min_score` is set from this sweep.",
         "",
         "## Honest limits",
         "",
@@ -377,8 +400,15 @@ def render_markdown(results: dict) -> str:
         "- The labels, the queries and the retriever all come from the same person, "
         "which is exactly the setup that flatters a retriever. The paraphrase arm "
         "exists to push back on that.",
-        "- Numbers use the offline hashing embedder so they are stable in CI. The "
-        "`sentence-transformers` backend is not measured here.",
+        (
+            "- Numbers use the offline hashing embedder so they are stable in CI. "
+            "The `sentence-transformers` backend is measured separately in "
+            "`results_sentence_transformers.md`."
+            if results["embedder"] == "HashingEmbedder"
+            else "- Numbers use `sentence-transformers` (all-MiniLM-L6-v2), which "
+            "needs a model download and is therefore not run in CI. Regenerate "
+            "with: `python eval/run_eval.py --embedder sentence-transformers`."
+        ),
     ]
     return "\n".join(lines)
 
@@ -395,15 +425,29 @@ def main() -> None:
     parser.add_argument(
         "--dataset", type=Path, default=Path(__file__).parent / "dataset.json"
     )
+    parser.add_argument(
+        "--embedder",
+        choices=EMBEDDER_CHOICES,
+        default="hashing",
+        help="which backend to score. The committed results.md is the hashing "
+        "run, because it is the one that reproduces offline and in CI.",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).parent)
     args = parser.parse_args()
 
     dataset = load_dataset(args.dataset)
-    results = evaluate(dataset, k=args.k, budget=args.budget, seed=args.seed)
+    embedder = make_embedder(args.embedder)
+    results = evaluate(
+        dataset, k=args.k, budget=args.budget, seed=args.seed, embedder=embedder
+    )
 
+    # Keep the two runs in separate files: results.md is the reproducible one
+    # CI regenerates and diffs, so a machine with the model installed must not
+    # silently overwrite it with numbers CI can never reproduce.
+    stem = "results" if args.embedder == "hashing" else "results_sentence_transformers"
     md = render_markdown(results)
-    (args.out_dir / "results.md").write_text(md + "\n")
-    (args.out_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+    (args.out_dir / f"{stem}.md").write_text(md + "\n")
+    (args.out_dir / f"{stem}.json").write_text(json.dumps(results, indent=2) + "\n")
     print(md)
     if not results["exact_tokenizer"]:
         print(
