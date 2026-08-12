@@ -8,11 +8,14 @@ from .embeddings import (
     default_min_score,
 )
 from .store import (
+    GLOBAL_STORE,
     MEMORY_TYPES,
     STORE_FORMAT,
     MemoryEntry,
     MemoryStore,
     RecallHit,
+    default_store_path,
+    find_project_root,
 )
 from .tokens import count_tokens
 
@@ -24,6 +27,9 @@ __all__ = [
     "RecallHit",
     "MEMORY_TYPES",
     "STORE_FORMAT",
+    "GLOBAL_STORE",
+    "default_store_path",
+    "find_project_root",
     "Embedder",
     "HashingEmbedder",
     "SentenceTransformerEmbedder",

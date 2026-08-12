@@ -21,15 +21,12 @@ Or register it (stdio) in your MCP client config — see the README.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
 from .embeddings import default_min_score
-from .store import MEMORY_TYPES, MemoryStore
-
-DEFAULT_STORE = Path(
-    os.environ.get("AGENT_MEMORY_PATH", "~/.agent_memory/store.json")
-).expanduser()
+from .store import MEMORY_TYPES, MemoryStore, default_store_path, relocation_notice
 
 # Who is talking to the store — "claude-code", "codex", "cursor", ...
 DEFAULT_AGENT = os.environ.get("AGENT_MEMORY_AGENT", "")
@@ -69,13 +66,25 @@ def _render(hits) -> str:
 
 
 def build_server(
-    store_path: Path = DEFAULT_STORE,
+    store_path: Optional[Path] = None,
     agent: str = DEFAULT_AGENT,
     min_score: Optional[float] = None,
 ):
     """Construct the MCP server. Imports `mcp` lazily so importing this module
-    never hard-fails when the optional dependency is absent."""
+    never hard-fails when the optional dependency is absent.
+
+    With no `store_path`, the store is resolved per project: the agent launches
+    this server from the working directory, so `.agent_memory/store.json` in the
+    enclosing repository is the store its memories belong to.
+    """
     server_class = _load_server_class()
+
+    if store_path is None:
+        store_path = default_store_path()
+        notice = relocation_notice(store_path)
+        if notice:
+            # stdout is the JSON-RPC channel; anything printed there corrupts it.
+            print(notice, file=sys.stderr)
 
     store = MemoryStore(path=store_path)
     if min_score is None:

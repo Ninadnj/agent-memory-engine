@@ -101,17 +101,33 @@ class HashingEmbedder:
 class SentenceTransformerEmbedder:
     """Real semantic embeddings. Optional: needs ``sentence-transformers``."""
 
-    # NOT calibrated in this repo — the offline benchmark runs on the hashing
-    # embedder, and MiniLM cosines sit on a higher scale (unrelated pairs often
-    # score 0.1-0.3). Treat this as a conservative starting point and measure on
-    # your own store before relying on it.
-    recommended_min_score = 0.25
+    # Calibrated on eval/dataset.json — see eval/results_sentence_transformers.md.
+    # Every off-topic query is already rejected at 0.15, and labelled recall is
+    # flat until it falls at 0.40, so anything in 0.15-0.35 scores identically on
+    # the benchmark. The tie is broken by headroom rather than by the sweep:
+    # genuine paraphrases can land low ("which AI model answers customer
+    # questions" scores 0.22 against a memory that answers it), so the floor sits
+    # just under that rather than in the middle of the safe band. MiniLM cosines
+    # run higher than the hashing embedder's, which is why this differs from it.
+    recommended_min_score = 0.20
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
         from sentence_transformers import SentenceTransformer  # lazy import
 
         self._model = SentenceTransformer(model_name)
-        self.dim = int(self._model.get_sentence_embedding_dimension())
+        # Renamed in sentence-transformers 5.x; support both so an upgrade of an
+        # optional dependency cannot break the backend.
+        get_dim = getattr(
+            self._model,
+            "get_embedding_dimension",
+            getattr(self._model, "get_sentence_embedding_dimension", None),
+        )
+        if get_dim is None:  # pragma: no cover - depends on the installed version
+            raise RuntimeError(
+                "could not determine the embedding dimension from "
+                f"sentence-transformers model {model_name!r}"
+            )
+        self.dim = int(get_dim())
         self.model_name = model_name
 
     def embed(self, texts: list[str]) -> np.ndarray:

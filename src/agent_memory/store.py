@@ -47,9 +47,66 @@ STORE_FORMAT = 2
 
 _ID_RE = re.compile(r"^mem_(\d+)$")
 
+# Where memories live when nothing is configured. One store per project, not one
+# store for everything you have ever worked on: recall matches on similarity
+# alone, so a single global file lets one project's deploy notes surface while
+# you are working on another.
+PROJECT_STORE_DIR = ".agent_memory"
+STORE_FILENAME = "store.json"
+GLOBAL_STORE = Path.home() / PROJECT_STORE_DIR / STORE_FILENAME
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def find_project_root(start: Optional[str | Path] = None) -> Optional[Path]:
+    """Nearest ancestor directory containing `.git`, or None outside a repo."""
+    current = Path(start).expanduser().resolve() if start else Path.cwd().resolve()
+    for candidate in (current, *current.parents):
+        # `.git` is a directory in a normal clone and a file in a worktree or
+        # submodule, so test for existence rather than for a directory.
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def default_store_path(start: Optional[str | Path] = None) -> Path:
+    """Resolve which store to use.
+
+    In precedence order: an explicit ``AGENT_MEMORY_PATH``, then the current
+    project's ``.agent_memory/store.json``, then a global store for work that
+    isn't in a repository.
+    """
+    configured = os.environ.get("AGENT_MEMORY_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    root = find_project_root(start)
+    if root is not None:
+        return root / PROJECT_STORE_DIR / STORE_FILENAME
+    return GLOBAL_STORE
+
+
+def relocation_notice(path: Path) -> Optional[str]:
+    """Warn once when a fresh project store is used but a global one has data.
+
+    Stores used to default to a single global file. Without this, upgrading
+    looks like every memory was deleted. Callers must print it to stderr — on
+    the MCP server stdout carries the protocol.
+    """
+    if path == GLOBAL_STORE or path.exists() or not GLOBAL_STORE.exists():
+        return None
+    try:
+        count = len(json.loads(GLOBAL_STORE.read_text()).get("entries", []))
+    except (OSError, ValueError):
+        return None
+    if not count:
+        return None
+    return (
+        f"[agent-memory] Starting an empty store for this project at {path}. "
+        f"Your global store still holds {count} memories — use them here with "
+        f"AGENT_MEMORY_PATH={GLOBAL_STORE}"
+    )
 
 
 @dataclass
