@@ -57,6 +57,31 @@ def _load_server_class():
         ) from exc
 
 
+# Sent to the client at initialize, so the model learns the workflow without
+# anyone editing a CLAUDE.md. This is the vendor-neutral half of "memory should
+# not depend on the model remembering": Claude Code can enforce the same habits
+# with hooks, but Codex and Cursor have no equivalent, and they read this.
+SERVER_INSTRUCTIONS = """\
+Durable project memory shared across coding agents and sessions.
+
+Use it like this:
+
+1. At the start of a session, call memory_boot with a one-line description of
+   the task. It returns the previous session's handoff plus relevant memories.
+   Do this before exploring the codebase — it often answers the question first.
+2. While working, call memory_write the moment you learn something that will
+   still be true next week: an architectural decision, a non-obvious constraint,
+   a bug's root cause. Write one fact per call, in one or two sentences. Do not
+   write things that are already obvious from reading the code.
+3. Before the session ends, call memory_handoff with what you finished, what
+   comes next, and anything the next agent should watch out for.
+
+If a memory turns out to be wrong or stale, fix it with memory_update or delete
+it with memory_forget rather than writing a second, contradicting memory — both
+would be recalled together. Find ids with memory_list.
+"""
+
+
 def _tag(entry) -> str:
     return f"{entry.type} · {entry.agent}" if entry.agent else entry.type
 
@@ -89,7 +114,10 @@ def build_server(
     store = MemoryStore(path=store_path)
     if min_score is None:
         min_score = default_min_score(store.embedder)
-    server = server_class("agent-memory")
+    try:
+        server = server_class("agent-memory", instructions=SERVER_INSTRUCTIONS)
+    except TypeError:  # older mcp releases have no `instructions` parameter
+        server = server_class("agent-memory")
 
     @server.tool()
     def memory_write(text: str, type: str = "fact") -> str:
