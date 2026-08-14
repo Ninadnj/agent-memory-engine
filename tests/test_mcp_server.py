@@ -133,6 +133,17 @@ def test_handoff_is_picked_up_by_a_second_agent_on_the_same_store(tmp_path, monk
     assert "claude-code" in out  # provenance survives the handoff
 
 
+def test_server_ships_usage_instructions(server):
+    """Clients surface these to the model, so agents without hooks still learn
+    the workflow. This is the vendor-neutral half of not relying on the model
+    to remember on its own."""
+    instructions = getattr(server, "instructions", None)
+    if instructions is None:  # older mcp releases have no such field
+        pytest.skip("installed mcp version does not carry server instructions")
+    for tool in ("memory_boot", "memory_write", "memory_handoff"):
+        assert tool in instructions
+
+
 def test_stats_reports_the_store(server):
     call(server, "memory_write", text="Bookings are stored in UTC.", type="decision")
     out = call(server, "memory_stats")

@@ -27,6 +27,7 @@ from .store import (
     MEMORY_TYPES,
     MemoryStore,
     default_store_path,
+    find_project_root,
     relocation_notice,
 )
 
@@ -131,6 +132,36 @@ def cmd_forget(args) -> None:
     print(f"Forgot {args.id}." if ok else f"No memory with id {args.id}.")
 
 
+def cmd_hook(args) -> None:
+    from . import hooks
+
+    raise SystemExit(hooks.run(args._events[args.event]))
+
+
+def cmd_install_hooks(args) -> None:
+    from . import hooks
+
+    root = Path.home() if args.user else (find_project_root() or Path.cwd())
+    settings = root / ".claude" / ("settings.json" if args.user else "settings.json")
+
+    if args.uninstall:
+        hooks.uninstall(settings)
+        print(f"Removed agent-memory hooks from {settings}")
+        return
+
+    events = ["SessionStart", "SessionEnd"]
+    if args.with_prompt_recall:
+        events.append("UserPromptSubmit")
+    for line in hooks.install(settings, events):
+        print(f"  {line}")
+    print(f"Installed into {settings}")
+    if not args.with_prompt_recall:
+        print(
+            "Add --with-prompt-recall to also surface memories relevant to each "
+            "prompt (costs a model load per message)."
+        )
+
+
 def cmd_stats(args) -> None:
     path = _resolve_path(args)
     s = MemoryStore(path=path).stats()
@@ -206,6 +237,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("stats", help="show store stats")
     s.set_defaults(func=cmd_stats)
+
+    hook = sub.add_parser(
+        "hook", help="internal: run a Claude Code hook (reads JSON on stdin)"
+    )
+    hook.add_argument(
+        "event", choices=["session-start", "session-end", "user-prompt"]
+    )
+    hook.set_defaults(
+        func=cmd_hook,
+        _events={
+            "session-start": "SessionStart",
+            "session-end": "SessionEnd",
+            "user-prompt": "UserPromptSubmit",
+        },
+    )
+
+    ih = sub.add_parser(
+        "install-hooks",
+        help="wire memory into Claude Code so it runs without being asked",
+    )
+    ih.add_argument(
+        "--with-prompt-recall",
+        action="store_true",
+        help="also inject memories relevant to each prompt (adds latency per message)",
+    )
+    ih.add_argument("--uninstall", action="store_true", help="remove the hooks again")
+    ih.add_argument(
+        "--user",
+        action="store_true",
+        help="install for every project (~/.claude/settings.json)",
+    )
+    ih.set_defaults(func=cmd_install_hooks)
     return parser
 
 

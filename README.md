@@ -107,6 +107,30 @@ env = { AGENT_MEMORY_AGENT = "codex" }
 
 Works with `mcp` 1.x and 2.x. Every memory carries its origin (`[decision · claude-code]`, `[handoff · codex]`), and a handoff written in one tool is picked up by the next. Agents may run at the same time: writes take a lock, merge, and land atomically, and a running server sees another agent's writes on its next read.
 
+### Make it run without being asked
+
+Every tool above depends on the model *choosing* to call it — and models forget, especially at the end of a session, because the session just ends. Two mechanisms close that gap.
+
+**Claude Code hooks** (deterministic — the client runs them, not the model):
+
+```bash
+agent-memory install-hooks                        # SessionStart + SessionEnd
+agent-memory install-hooks --with-prompt-recall   # also inject on every prompt
+agent-memory install-hooks --uninstall
+```
+
+| Hook | What happens |
+| --- | --- |
+| `SessionStart` | Injects the previous session's handoff plus a few durable project facts, and records where the repo stood. **No model discipline needed.** |
+| `SessionEnd` | Diffs against that marker and saves what actually changed — commits made, files still dirty. Writes nothing if nothing happened. |
+| `UserPromptSubmit` *(opt-in)* | Injects memories relevant to what you just asked. Fires on every message, so it costs a model load each time. |
+
+It merges into `.claude/settings.json` without touching hooks belonging to other tools, and re-running replaces its own entries instead of stacking copies. Use `--user` to install for every project.
+
+**MCP server instructions** (vendor-neutral): the server tells any connecting client — Claude Code, Codex, Cursor — when to boot, write and hand off. That reaches the agents where hooks don't exist. Nothing to configure.
+
+**What this honestly does and doesn't do.** The *read* side is now fully automatic: memory arrives without anyone asking for it. The *write* side has a deterministic floor — the session note is derived from git, so it's accurate and always written — but a note saying "committed X, changed Y" is weaker than a handoff explaining *why*. Only the model can write that, so the instructions above push it to. Summarising a session properly would need an LLM call, which this engine deliberately does not make.
+
 ### One store per project
 
 Memories are scoped to the repository you're working in:
@@ -292,6 +316,7 @@ agent-memory list --type decision                # ids, so you can fix mistakes
 agent-memory update mem_0003 "<new text>"        # revise a memory
 agent-memory forget mem_0007                     # delete a stale memory
 agent-memory stats                               # store path, counts, embedder
+agent-memory install-hooks                       # run memory automatically (Claude Code)
 ```
 
 Global flags: `--path` (explicit store), `--global` (cross-project store), `--agent` (who is writing).
@@ -337,7 +362,7 @@ One memory per `##` section, with long sections split so every ingested memory s
 
 ## Limits
 
-- **Nothing writes memories for you.** The agent has to choose to call `memory_write` and `memory_handoff`. If it doesn't, the store stays empty. Prompt instructions or a session hook make this reliable; that isn't built in yet.
+- **Automatic writes are deterministic, not insightful.** With hooks installed, every session saves an accurate git-derived note, and reads need no prompting at all. But a handoff explaining *why* something was done still depends on the model choosing to write one — the server's instructions push for it, and this engine makes no LLM call of its own.
 - **Memories never expire.** `state` and `worklog` entries go stale but keep being recalled as confidently as a fresh decision. Correct them with `memory_update` / `memory_forget` until decay lands.
 - **Retrieval is lexical unless you install the `real` extra.** See [the comparison](#which-embedder-should-you-use).
 - **Memories are replayed verbatim into other agents' context.** Anything an agent writes — including text it read from a webpage, an issue tracker or a dependency — later reads as trusted project knowledge. Don't point a shared store at untrusted input, and skim `agent-memory list` occasionally.
@@ -355,7 +380,6 @@ pytest -q
 
 ## Roadmap
 
-- Session hooks, so writing a handoff doesn't depend on the agent remembering to.
 - Recency- and type-aware ranking (decay old `state`, never drop `decision`).
 - LLM-based compaction: summarise and dedup `state`/`worklog`, extract durable facts from a session transcript.
 - Optional FAISS backend for large stores.
