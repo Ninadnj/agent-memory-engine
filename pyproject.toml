@@ -25,8 +25,8 @@ mcp = ["mcp>=1.0"]
 dev = ["pytest>=7.0", "mcp>=1.0", "tiktoken>=0.5"]
 
 [project.urls]
-Repository = "https://github.com/Ninadnj/ai-agent-memory-scaffold"
-Issues = "https://github.com/Ninadnj/ai-agent-memory-scaffold/issues"
+Repository = "https://github.com/Ninadnj/agent-memory-engine"
+Issues = "https://github.com/Ninadnj/agent-memory-engine/issues"
 
 [project.scripts]
 agent-memory = "agent_memory.cli:main"

@@ -47,6 +47,26 @@ STORE_FORMAT = 2
 
 _ID_RE = re.compile(r"^mem_(\d+)$")
 
+# How fast a memory's relevance fades, in days, per type. A memory's similarity
+# score is multiplied by 0.5 ** (age / half_life), so an entry at its half-life
+# needs to be twice as good a match to rank where it did when fresh.
+#
+# Not everything should fade. "Bookings are stored in UTC" is as true in a year
+# as it was on the day it was written, and decaying it would quietly lose the
+# facts most worth keeping. What goes stale is the record of a moment:
+# "currently implementing X" is usually false a fortnight later, and recalling
+# it with full confidence actively misleads. Correct a decision with
+# memory_update; let a status note fade on its own.
+HALF_LIFE_DAYS: dict[str, Optional[float]] = {
+    "state": 7.0,  # "currently working on…" — stale fastest
+    "handoff": 7.0,  # next steps are usually done or abandoned by then
+    "worklog": 21.0,  # what happened still orients, but fades
+    "decision": None,  # durable until explicitly superseded
+    "project": None,
+    "issue": None,  # true until someone fixes it; forget it then
+    "fact": None,
+}
+
 # Where memories live when nothing is configured. One store per project, not one
 # store for everything you have ever worked on: recall matches on similarity
 # alone, so a single global file lets one project's deploy notes surface while
@@ -129,6 +149,26 @@ class MemoryEntry:
 class RecallHit:
     entry: MemoryEntry
     score: float
+
+
+def age_in_days(entry: MemoryEntry, now: Optional[datetime] = None) -> float:
+    """How old a memory is. 0.0 when the timestamp is unreadable or in the future."""
+    try:
+        written = datetime.fromisoformat(entry.created_at)
+    except (TypeError, ValueError):
+        return 0.0  # an unparseable timestamp must not silently bury the memory
+    if written.tzinfo is None:
+        written = written.replace(tzinfo=timezone.utc)
+    delta = (now or datetime.now(timezone.utc)) - written
+    return max(0.0, delta.total_seconds() / 86400.0)  # clock skew must not boost
+
+
+def decay_factor(entry: MemoryEntry, now: Optional[datetime] = None) -> float:
+    """Multiplier applied to a memory's similarity score, in (0, 1]."""
+    half_life = HALF_LIFE_DAYS.get(entry.type)
+    if not half_life:
+        return 1.0
+    return float(0.5 ** (age_in_days(entry, now) / half_life))
 
 
 @contextmanager
@@ -364,6 +404,7 @@ class MemoryStore:
         budget_tokens: Optional[int] = None,
         exclude_ids: Optional[set[str]] = None,
         min_score: float = 0.0,
+        decay: bool = True,
     ) -> list[RecallHit]:
         """Top-k most relevant memories, optionally under a hard token budget.
 
@@ -375,12 +416,24 @@ class MemoryStore:
         `min_score` drops weak matches entirely. Without it a query unrelated to
         anything in the store still returns k memories, and the agent reading
         them has no way to tell they are noise.
+
+        `decay` fades time-sensitive memories (see HALF_LIFE_DAYS) so that a
+        month-old "currently implementing X" ranks below a fresh fact instead of
+        alongside it. Durable types are unaffected. Combined with `min_score`,
+        stale status notes eventually drop out of recall on their own.
         """
         self._reload_if_changed()
         if not self._entries:
             return []
         qvec = self.embedder.embed([query])[0]
         sims = self._matrix @ qvec  # cosine: both sides are unit-norm
+        if decay:
+            factors = np.array(
+                [decay_factor(e) for e in self._entries], dtype=np.float32
+            )
+            # Only fade positive scores: scaling a negative one moves it toward
+            # zero, which would promote an unrelated old memory rather than bury it.
+            sims = np.where(sims > 0, sims * factors, sims)
         order = np.argsort(-sims)
         hits: list[RecallHit] = []
         remaining = budget_tokens
@@ -409,6 +462,7 @@ class MemoryStore:
         k: int = 5,
         budget_tokens: Optional[int] = 300,
         min_score: float = 0.0,
+        decay: bool = True,
     ) -> tuple[Optional[MemoryEntry], list[RecallHit]]:
         """Return the latest handoff plus relevant memories for a new session.
 
@@ -434,6 +488,7 @@ class MemoryStore:
             budget_tokens=remaining,
             exclude_ids=excluded_ids,
             min_score=min_score,
+            decay=decay,
         )
         return included_handoff, hits
 

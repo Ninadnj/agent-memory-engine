@@ -169,13 +169,13 @@ available.
 ## Copy Into Existing Repo
 
 ```bash
-git clone https://github.com/Ninadnj/ai-agent-memory-scaffold.git
+git clone https://github.com/Ninadnj/agent-memory-engine.git
 
-cp ai-agent-memory-scaffold/AGENTS.md ./AGENTS.md
-cp ai-agent-memory-scaffold/CLAUDE.md ./CLAUDE.md
-cp -R ai-agent-memory-scaffold/agent-memory ./agent-memory
-cp -R ai-agent-memory-scaffold/commands ./commands
-cp -R ai-agent-memory-scaffold/workflows ./workflows
+cp agent-memory-engine/AGENTS.md ./AGENTS.md
+cp agent-memory-engine/CLAUDE.md ./CLAUDE.md
+cp -R agent-memory-engine/agent-memory ./agent-memory
+cp -R agent-memory-engine/commands ./commands
+cp -R agent-memory-engine/workflows ./workflows
 ```
 
 After copying, fill in `agent-memory/PROJECT.md`, clear or rewrite
