@@ -1,6 +1,6 @@
 # Agent Memory Engine
 
-[![CI](https://github.com/Ninadnj/ai-agent-memory-scaffold/actions/workflows/ci.yml/badge.svg)](https://github.com/Ninadnj/ai-agent-memory-scaffold/actions/workflows/ci.yml)
+[![CI](https://github.com/Ninadnj/agent-memory-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Ninadnj/agent-memory-engine/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -17,8 +17,8 @@ This engine sits in between. Agents write short, atomic memories to one store; a
 ## Quick start
 
 ```bash
-git clone https://github.com/Ninadnj/ai-agent-memory-scaffold.git
-cd ai-agent-memory-scaffold
+git clone https://github.com/Ninadnj/agent-memory-engine.git
+cd agent-memory-engine
 pip install -e ".[mcp,real]"
 ```
 
@@ -273,6 +273,17 @@ Budget packing is greedy, not all-or-nothing: an entry that would overflow the r
 
 Override with `AGENT_MEMORY_MIN_SCORE` or `--min-score`. The honest consequence: when a query is genuinely ambiguous, recall returns *nothing* rather than a coin flip the agent would read as fact.
 
+**Memories fade, but only the ones that should.** A similarity score is multiplied by `0.5 ** (age / half-life)`, so a memory at its half-life must be twice the match to rank where it did when fresh:
+
+| Type | Half-life | Why |
+| --- | --- | --- |
+| `state` | 7 days | "Currently implementing X" is usually false a fortnight later. |
+| `handoff` | 7 days | Next steps are done or abandoned by then. |
+| `worklog` | 21 days | What happened still orients you, but fades. |
+| `decision` `project` `issue` `fact` | never | True until explicitly superseded. Fading these would lose the memories most worth keeping. |
+
+Combined with the floor, a stale status note eventually drops out of recall on its own — no cleanup required. Durable facts never do; correct those with `memory_update` or drop them with `memory_forget`. `agent-memory list` shows each memory's age and how far it has faded, and `--no-decay` ranks on similarity alone.
+
 ### The write path
 
 The store is a single JSON file, but writes are careful, because the whole point is that several agents share it.
@@ -312,7 +323,7 @@ agent-memory write "<text>" --type decision      # save a memory
 agent-memory recall "<query>" -k 3 --budget 200  # find relevant memories
 agent-memory boot "<task>" --budget 300          # handoff + relevant memories
 agent-memory handoff --done "..." --next "..."   # leave a note for the next session
-agent-memory list --type decision                # ids, so you can fix mistakes
+agent-memory list --type decision                # ids, ages and how far each has faded
 agent-memory update mem_0003 "<new text>"        # revise a memory
 agent-memory forget mem_0007                     # delete a stale memory
 agent-memory stats                               # store path, counts, embedder
@@ -363,7 +374,7 @@ One memory per `##` section, with long sections split so every ingested memory s
 ## Limits
 
 - **Automatic writes are deterministic, not insightful.** With hooks installed, every session saves an accurate git-derived note, and reads need no prompting at all. But a handoff explaining *why* something was done still depends on the model choosing to write one — the server's instructions push for it, and this engine makes no LLM call of its own.
-- **Memories never expire.** `state` and `worklog` entries go stale but keep being recalled as confidently as a fresh decision. Correct them with `memory_update` / `memory_forget` until decay lands.
+- **Fading is time-based, not truth-based.** A `state` note fades on a schedule; it has no idea whether it is still true. A `decision` that quietly stopped being true stays at full strength until someone corrects it.
 - **Retrieval is lexical unless you install the `real` extra.** See [the comparison](#which-embedder-should-you-use).
 - **Memories are replayed verbatim into other agents' context.** Anything an agent writes — including text it read from a webpage, an issue tracker or a dependency — later reads as trusted project knowledge. Don't point a shared store at untrusted input, and skim `agent-memory list` occasionally.
 - **The store is a local file.** No auth, no encryption, no server. It belongs next to your code, not on a shared host.
@@ -380,7 +391,6 @@ pytest -q
 
 ## Roadmap
 
-- Recency- and type-aware ranking (decay old `state`, never drop `decision`).
 - LLM-based compaction: summarise and dedup `state`/`worklog`, extract durable facts from a session transcript.
 - Optional FAISS backend for large stores.
 

@@ -81,6 +81,7 @@ def cmd_recall(args) -> None:
         k=args.k,
         budget_tokens=args.budget,
         min_score=_min_score(args, store),
+        decay=not args.no_decay,
     )
     if not hits:
         print("No relevant memories.")
@@ -114,12 +115,19 @@ def cmd_boot(args) -> None:
 
 
 def cmd_list(args) -> None:
+    from .store import age_in_days, decay_factor
+
     entries = [e for e in reversed(_store(args).all()) if not args.type or e.type == args.type]
     if not entries:
         print("No memories stored.")
         return
     for e in entries[: args.limit]:
-        print(f"{e.id}  [{_tag(e)}] {e.text}")
+        age = age_in_days(e)
+        # Surface staleness here: this is the command you run to decide what to
+        # correct or forget.
+        faded = decay_factor(e)
+        note = f"{age:.0f}d" + (f", faded to {faded:.0%}" if faded < 0.95 else "")
+        print(f"{e.id}  [{_tag(e)} · {note}] {e.text}")
 
 
 def cmd_update(args) -> None:
@@ -204,6 +212,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="min_score",
         help="drop matches weaker than this cosine score (0 disables; "
         "default is calibrated per embedder)",
+    )
+    r.add_argument(
+        "--no-decay",
+        action="store_true",
+        help="rank purely by similarity, without fading time-sensitive memories",
     )
     r.set_defaults(func=cmd_recall)
 

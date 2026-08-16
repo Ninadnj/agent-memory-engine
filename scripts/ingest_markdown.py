@@ -1,7 +1,7 @@
 """Migrate an existing Markdown memory scaffold into the engine.
 
 Reads a directory of `.md` files (e.g. the agent-memory/ folder from the
-ai-agent-memory-scaffold convention) and writes one memory per `##` section,
+Markdown scaffold convention in scaffold/) and writes one memory per `##` section,
 guessing the memory type from the filename.
 
     python scripts/ingest_markdown.py path/to/agent-memory/ [--path store.json]

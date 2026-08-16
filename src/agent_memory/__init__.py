@@ -9,11 +9,14 @@ from .embeddings import (
 )
 from .store import (
     GLOBAL_STORE,
+    HALF_LIFE_DAYS,
     MEMORY_TYPES,
     STORE_FORMAT,
     MemoryEntry,
     MemoryStore,
     RecallHit,
+    age_in_days,
+    decay_factor,
     default_store_path,
     find_project_root,
 )
@@ -28,6 +31,9 @@ __all__ = [
     "MEMORY_TYPES",
     "STORE_FORMAT",
     "GLOBAL_STORE",
+    "HALF_LIFE_DAYS",
+    "age_in_days",
+    "decay_factor",
     "default_store_path",
     "find_project_root",
     "Embedder",
