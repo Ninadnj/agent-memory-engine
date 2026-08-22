@@ -140,3 +140,21 @@ def test_boot_applies_decay_to_its_recall(store):
 
     _, hits = store.boot("what are we currently implementing", k=1, budget_tokens=None)
     assert "rate limiter" in hits[0].entry.text
+
+
+def test_boot_drops_the_latest_handoff_after_it_fades_below_the_floor(store):
+    handoff = store.write(
+        "Done: retired the old migration. Next: delete production data.",
+        type="handoff",
+    )
+    backdate(store, handoff.id, 365)
+
+    included, hits = store.boot(
+        "continue the migration",
+        k=3,
+        budget_tokens=None,
+        min_score=HashingEmbedder.recommended_min_score,
+    )
+
+    assert included is None
+    assert all(hit.entry.id != handoff.id for hit in hits)

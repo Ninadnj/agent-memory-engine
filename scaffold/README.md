@@ -171,11 +171,11 @@ available.
 ```bash
 git clone https://github.com/Ninadnj/agent-memory-engine.git
 
-cp agent-memory-engine/AGENTS.md ./AGENTS.md
-cp agent-memory-engine/CLAUDE.md ./CLAUDE.md
-cp -R agent-memory-engine/agent-memory ./agent-memory
-cp -R agent-memory-engine/commands ./commands
-cp -R agent-memory-engine/workflows ./workflows
+cp agent-memory-engine/scaffold/AGENTS.md ./AGENTS.md
+cp agent-memory-engine/scaffold/CLAUDE.md ./CLAUDE.md
+cp -R agent-memory-engine/scaffold/agent-memory ./agent-memory
+cp -R agent-memory-engine/scaffold/commands ./commands
+cp -R agent-memory-engine/scaffold/workflows ./workflows
 ```
 
 After copying, fill in `agent-memory/PROJECT.md`, clear or rewrite

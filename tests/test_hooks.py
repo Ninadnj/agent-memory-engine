@@ -7,9 +7,10 @@ Two properties matter most here and are tested hardest:
 """
 
 import io
-from pathlib import Path
 import json
 import subprocess
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -76,6 +77,25 @@ def test_session_start_surfaces_the_previous_session_note(repo):
     assert "Add rate limiting" in context
 
 
+def test_session_start_does_not_inject_expired_handoffs_or_worklogs(repo):
+    store = store_for(repo)
+    handoff = store.write(
+        "Done: old migration. Next: delete production data.", type="handoff"
+    )
+    worklog = store.write("An obsolete session note.", type="worklog")
+    old = datetime.now(timezone.utc) - timedelta(days=365)
+    handoff.created_at = old.isoformat(timespec="seconds")
+    worklog.created_at = old.isoformat(timespec="seconds")
+    store.save()
+    store.write("Bookings are stored in UTC.", type="project")
+
+    context = hooks.session_start(payload(repo, "SessionStart"))["additionalContext"]
+
+    assert "Bookings are stored in UTC." in context
+    assert "delete production data" not in context
+    assert "obsolete session note" not in context
+
+
 def test_session_start_is_silent_on_an_empty_store(repo):
     assert hooks.session_start(payload(repo, "SessionStart")) == {}
 
@@ -128,6 +148,26 @@ def test_session_end_writes_nothing_when_nothing_happened(repo):
 
     assert hooks.session_end(payload(repo, "SessionEnd")) == {}
     assert [e.type for e in store_for(repo).all()] == ["decision"]  # no worklog note
+
+
+def test_session_end_ignores_dirty_files_that_predate_the_session(repo):
+    (repo / "notes.md").write_text("already dirty\n")
+    hooks.session_start(payload(repo, "SessionStart"))
+
+    assert hooks.session_end(payload(repo, "SessionEnd")) == {}
+    assert [e for e in store_for(repo).all() if e.type == "worklog"] == []
+
+
+def test_session_end_detects_further_edits_to_a_preexisting_dirty_file(repo):
+    notes = repo / "notes.md"
+    notes.write_text("already dirty\n")
+    hooks.session_start(payload(repo, "SessionStart"))
+    notes.write_text("already dirty, then changed again during this session\n")
+
+    assert "systemMessage" in hooks.session_end(payload(repo, "SessionEnd"))
+    worklogs = [e for e in store_for(repo).all() if e.type == "worklog"]
+    assert len(worklogs) == 1
+    assert "notes.md" in worklogs[0].text
 
 
 def test_session_end_removes_the_marker(repo):
@@ -225,14 +265,14 @@ def test_install_creates_settings_and_is_idempotent(settings):
     hooks.install(settings, ["SessionStart", "SessionEnd"])
 
     data = json.loads(settings.read_text())
-    commands = [
-        h["command"]
+    entries = [
+        h
         for groups in data["hooks"].values()
         for g in groups
         for h in g["hooks"]
     ]
-    assert len(commands) == 2, f"re-running must not stack copies: {commands}"
-    assert sorted(c.rsplit(" hook ", 1)[-1] for c in commands) == [
+    assert len(entries) == 2, f"re-running must not stack copies: {entries}"
+    assert sorted(entry["args"][-1] for entry in entries) == [
         "session-end",
         "session-start",
     ]
@@ -251,9 +291,9 @@ def test_install_preserves_other_tools_and_settings(settings):
     hooks.install(settings, ["SessionStart", "SessionEnd"])
     data = json.loads(settings.read_text())
 
-    start = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
-    assert "other-tool init" in start
-    assert any(c.endswith("hook session-start") for c in start)
+    start = [h for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
+    assert any(h["command"] == "other-tool init" for h in start)
+    assert any(h.get("args") == ["hook", "session-start"] for h in start)
     assert data["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "my-linter"
     assert data["permissions"] == {"allow": ["Bash(npm test)"]}
 
@@ -287,10 +327,20 @@ def test_prompt_recall_hook_carries_a_timeout_under_the_event_limit(settings):
 def test_installed_command_is_an_absolute_path(settings):
     """The client spawns hooks without our virtualenv necessarily on PATH."""
     hooks.install(settings, ["SessionStart"])
-    command = json.loads(settings.read_text())["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert command.endswith("hook session-start")
-    executable = command.rsplit(" hook ", 1)[0]
-    assert executable == "agent-memory" or Path(executable).is_absolute()
+    entry = json.loads(settings.read_text())["hooks"]["SessionStart"][0]["hooks"][0]
+    assert entry["args"] == ["hook", "session-start"]
+    assert entry["command"] == "agent-memory" or Path(entry["command"]).is_absolute()
+
+
+def test_installed_command_preserves_an_executable_path_with_spaces(settings, monkeypatch):
+    executable = "/tmp/Agent Memory/bin/agent-memory"
+    monkeypatch.setattr(hooks, "_executable", lambda: executable)
+
+    hooks.install(settings, ["SessionStart"])
+
+    entry = json.loads(settings.read_text())["hooks"]["SessionStart"][0]["hooks"][0]
+    assert entry["command"] == executable
+    assert entry["args"] == ["hook", "session-start"]
 
 
 def test_hooks_written_bare_are_still_recognised(settings):

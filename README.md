@@ -387,7 +387,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-74 tests. CI runs the suite on Python 3.10 and 3.12, runs the evaluation and fails if the committed results are stale, and separately tests the MCP server against both `mcp` 1.x and 2.x. Tests for the optional semantic backend skip automatically unless the `real` extra is installed.
+CI runs the suite on Python 3.10 and 3.12, runs the evaluation and fails if the committed results are stale, and separately tests the MCP server against both `mcp` 1.x and 2.x. Tests for the optional semantic backend skip automatically unless the `real` extra is installed.
 
 ## Roadmap
 

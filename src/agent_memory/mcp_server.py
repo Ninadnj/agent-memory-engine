@@ -27,6 +27,7 @@ from typing import Optional
 
 from .embeddings import default_min_score
 from .store import MEMORY_TYPES, MemoryStore, default_store_path, relocation_notice
+from .tokens import count_tokens
 
 # Who is talking to the store — "claude-code", "codex", "cursor", ...
 DEFAULT_AGENT = os.environ.get("AGENT_MEMORY_AGENT", "")
@@ -86,8 +87,25 @@ def _tag(entry) -> str:
     return f"{entry.type} · {entry.agent}" if entry.agent else entry.type
 
 
-def _render(hits) -> str:
-    return "\n".join(f"- [{_tag(h.entry)}] {h.entry.text}" for h in hits)
+def _pack_lines(lines, budget_tokens: int, limit: int) -> str:
+    """Pack complete rendered lines so protocol output respects the real budget."""
+    if limit <= 0:
+        return ""
+    selected: list[str] = []
+    for line in lines:
+        if len(selected) >= limit:
+            break
+        candidate = "\n".join([*selected, line])
+        if budget_tokens != 0 and count_tokens(candidate) > budget_tokens:
+            continue
+        selected.append(line)
+    return "\n".join(selected)
+
+
+def _budgeted_message(message: str, budget_tokens: int) -> str:
+    if budget_tokens == 0 or count_tokens(message) <= budget_tokens:
+        return message
+    return ""
 
 
 def build_server(
@@ -137,25 +155,51 @@ def build_server(
     def memory_recall(query: str, k: int = 5, budget_tokens: int = 300) -> str:
         """Recall the most relevant memories for `query`, never exceeding
         `budget_tokens` of context. Set budget_tokens=0 for no cap."""
+        candidate_count = len(store.all())
         hits = store.recall(
-            query, k=k, budget_tokens=budget_tokens or None, min_score=min_score
+            query,
+            k=max(k, candidate_count),
+            budget_tokens=None,
+            min_score=min_score,
         )
-        return _render(hits) if hits else "No relevant memories."
+        rendered = _pack_lines(
+            (f"- [{_tag(hit.entry)}] {hit.entry.text}" for hit in hits),
+            budget_tokens,
+            k,
+        )
+        return rendered or _budgeted_message("No relevant memories.", budget_tokens)
 
     @server.tool()
     def memory_boot(task: str, budget_tokens: int = 300) -> str:
         """Call once at the start of a session: returns the latest handoff from
         the previous agent plus the memories most relevant to `task`, packed
-        under one memory-content token budget."""
-        parts: list[str] = []
+        under one rendered-output token budget. Set budget_tokens=0 for no cap."""
+        candidate_count = len(store.all())
         handoff, hits = store.boot(
-            task, k=5, budget_tokens=budget_tokens, min_score=min_score
+            task,
+            k=max(5, candidate_count),
+            budget_tokens=None,
+            min_score=min_score,
         )
+        parts: list[str] = []
         if handoff is not None:
-            parts.append(f"Last handoff [{_tag(handoff)}]: {handoff.text}")
-        if hits:
-            parts.append(_render(hits))
-        return "\n".join(parts) if parts else "Empty store — start fresh."
+            handoff_line = f"Last handoff [{_tag(handoff)}]: {handoff.text}"
+            packed = _pack_lines([handoff_line], budget_tokens, 1)
+            if packed:
+                parts.append(packed)
+        remaining_hits = 5
+        for hit in hits:
+            if remaining_hits <= 0:
+                break
+            line = f"- [{_tag(hit.entry)}] {hit.entry.text}"
+            candidate = "\n".join([*parts, line])
+            if budget_tokens != 0 and count_tokens(candidate) > budget_tokens:
+                continue
+            parts.append(line)
+            remaining_hits -= 1
+        if parts:
+            return "\n".join(parts)
+        return _budgeted_message("Empty store — start fresh.", budget_tokens)
 
     @server.tool()
     def memory_handoff(done: str, next_steps: str, warnings: str = "") -> str:

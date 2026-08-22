@@ -34,6 +34,29 @@ def type_for(filename: str) -> str:
     return _FILE_TYPE.get(stem, "fact")
 
 
+def _split_to_budget(text: str, max_tokens: int) -> list[str]:
+    """Recursively split one paragraph without leaving an oversized chunk."""
+    text = text.strip()
+    if not text:
+        return []
+    if count_tokens(text) <= max_tokens:
+        return [text]
+    if len(text) == 1:
+        raise ValueError(
+            f"max_tokens={max_tokens} is too small for the character {text!r}"
+        )
+
+    midpoint = len(text) // 2
+    whitespace = [match.start() for match in re.finditer(r"\s+", text)]
+    split_at = min(whitespace, key=lambda i: abs(i - midpoint)) if whitespace else midpoint
+    if split_at <= 0 or split_at >= len(text):
+        split_at = midpoint
+    return [
+        *_split_to_budget(text[:split_at], max_tokens),
+        *_split_to_budget(text[split_at:], max_tokens),
+    ]
+
+
 def sections(text: str, max_tokens: int = 120) -> list[str]:
     """Split a Markdown file into `##` sections, dropping headings and blanks.
 
@@ -42,6 +65,9 @@ def sections(text: str, max_tokens: int = 120) -> list[str]:
     store permanently unreachable — chunking keeps every ingested memory
     retrievable.
     """
+    if max_tokens <= 0:
+        raise ValueError("max_tokens must be greater than zero")
+
     chunks = [c.strip() for c in re.split(r"^##\s+.*$", text, flags=re.MULTILINE)]
     out: list[str] = []
     for chunk in chunks:
@@ -52,15 +78,13 @@ def sections(text: str, max_tokens: int = 120) -> list[str]:
             continue
         buffer: list[str] = []
         for para in re.split(r"\n\s*\n", chunk):
-            para = para.strip()
-            if not para:
-                continue
-            candidate = "\n\n".join(buffer + [para])
-            if buffer and count_tokens(candidate) > max_tokens:
-                out.append("\n\n".join(buffer))
-                buffer = [para]
-            else:
-                buffer.append(para)
+            for piece in _split_to_budget(para, max_tokens):
+                candidate = "\n\n".join(buffer + [piece])
+                if buffer and count_tokens(candidate) > max_tokens:
+                    out.append("\n\n".join(buffer))
+                    buffer = [piece]
+                else:
+                    buffer.append(piece)
         if buffer:
             out.append("\n\n".join(buffer))
     return out

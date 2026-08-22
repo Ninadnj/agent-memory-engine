@@ -90,13 +90,28 @@ def test_boot_never_exceeds_its_budget(server):
 
     for budget in (30, 60, 120, 300):
         out = call(server, "memory_boot", task="continue the booking work", budget_tokens=budget)
-        # Strip the rendering scaffolding; only memory text is charged to the budget.
-        body = out.replace("Last handoff [handoff · claude-code]: ", "")
-        body = "\n".join(line.lstrip("- ") for line in body.splitlines())
-        content = "".join(
-            part.split("] ", 1)[-1] if "] " in part else part for part in body.splitlines()
+        assert count_tokens(out) <= budget, f"budget {budget} exceeded: {out!r}"
+
+
+def test_recall_budget_includes_rendered_tags_and_list_markers(server):
+    for text in [
+        "Deployment fact alpha.",
+        "Deployment fact beta.",
+        "Deployment fact gamma.",
+    ]:
+        call(server, "memory_write", text=text, type="fact")
+
+    from agent_memory.tokens import count_tokens
+
+    for budget in (1, 5, 12, 30):
+        out = call(
+            server,
+            "memory_recall",
+            query="deployment facts",
+            k=3,
+            budget_tokens=budget,
         )
-        assert count_tokens(content) <= budget, f"budget {budget} exceeded: {out!r}"
+        assert count_tokens(out) <= budget, f"budget {budget} exceeded: {out!r}"
 
 
 def test_boot_on_an_empty_store(server):

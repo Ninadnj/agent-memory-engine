@@ -117,7 +117,8 @@ def session_start(payload: dict) -> dict:
     budget = SESSION_START_BUDGET
     parts: list[str] = []
 
-    handoff = store.latest("handoff")
+    floor = default_min_score(store.embedder)
+    handoff = store.latest("handoff", min_score=floor, decay=True)
     if handoff is not None and handoff.tokens <= budget:
         parts.append(f"Last handoff [{handoff.agent or 'unknown'}]: {handoff.text}")
         budget -= handoff.tokens
@@ -125,7 +126,7 @@ def session_start(payload: dict) -> dict:
     # What the previous session actually did. Complements the handoff rather
     # than repeating it: the handoff says why, this says what changed. Without
     # it the SessionEnd autosave would be written and never read.
-    note = store.latest("worklog")
+    note = store.latest("worklog", min_score=floor, decay=True)
     if note is not None and note.tokens <= budget:
         parts.append(f"Last session: {note.text}")
         budget -= note.tokens
@@ -167,6 +168,7 @@ def _write_marker(payload: dict, store: MemoryStore) -> None:
         "branch": _git(root, "rev-parse", "--abbrev-ref", "HEAD"),
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "root": str(root),
+        "dirty": _dirty_snapshot(root),
     }
     try:
         directory = _sessions_dir(store.path)
@@ -249,13 +251,14 @@ def _describe_session(root: Path, marker: dict) -> Optional[str]:
         log = _git(root, "log", "--format=%s", f"{start_head}..{head}")
         commits = [line for line in (log or "").splitlines() if line]
 
-    status = _git(root, "status", "--porcelain") or ""
+    before = marker.get("dirty", {})
+    if not isinstance(before, dict):
+        before = {}
+    current = _dirty_snapshot(root)
     dirty = sorted(
         path
-        for path in {
-            line[3:].split(" -> ")[-1] for line in status.splitlines() if len(line) > 3
-        }
-        if not _is_store_path(path)
+        for path, fingerprint in current.items()
+        if before.get(path) != fingerprint
     )
 
     if not commits and not dirty:
@@ -285,6 +288,32 @@ def _is_store_path(path: str) -> bool:
         cleaned = cleaned[2:]
     cleaned = cleaned.rstrip("/")
     return cleaned == PROJECT_STORE_DIR or cleaned.startswith(PROJECT_STORE_DIR + "/")
+
+
+def _dirty_snapshot(root: Path) -> dict[str, str]:
+    """Cheap per-path fingerprints for changes already present at session start."""
+    status = _git(
+        root,
+        "-c",
+        "core.quotepath=false",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+    ) or ""
+    snapshot: dict[str, str] = {}
+    for line in status.splitlines():
+        if len(line) <= 3:
+            continue
+        path = line[3:].split(" -> ")[-1].strip('"')
+        if _is_store_path(path):
+            continue
+        try:
+            stat = (root / path).lstat()
+            file_state = f"{stat.st_mode}:{stat.st_size}:{stat.st_mtime_ns}"
+        except OSError:
+            file_state = "missing"
+        snapshot[path] = f"{line[:2]}:{file_state}"
+    return snapshot
 
 
 def _agent_name() -> str:
@@ -324,7 +353,8 @@ def _executable() -> str:
 def _hook_entry(event: str) -> dict:
     entry = {
         "type": "command",
-        "command": f"{_executable()} hook {_CLI_NAME[event]}",
+        "command": _executable(),
+        "args": ["hook", _CLI_NAME[event]],
     }
     if event == "UserPromptSubmit":
         entry["timeout"] = 20  # the event's own limit is 30s
@@ -335,7 +365,12 @@ def _is_ours(hook: dict) -> bool:
     """Match our hooks whether they were written bare or as an absolute path."""
     if not isinstance(hook, dict):
         return False
-    return HOOK_COMMAND in str(hook.get("command", ""))
+    command = str(hook.get("command", ""))
+    args = hook.get("args")
+    if isinstance(args, list):
+        executable = command.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        return executable in {"agent-memory", "agent-memory.exe"} and args[:1] == ["hook"]
+    return HOOK_COMMAND in command
 
 
 def install(settings_path: Path, events: list[str]) -> list[str]:
@@ -366,7 +401,8 @@ def install(settings_path: Path, events: list[str]) -> list[str]:
         if event in events:
             entry = _hook_entry(event)
             cleaned.append({"hooks": [entry]})
-            changes.append(f"{event} -> {entry['command']}")
+            command = " ".join([entry["command"], *entry["args"]])
+            changes.append(f"{event} -> {command}")
         if cleaned:
             hooks[event] = cleaned
         else:

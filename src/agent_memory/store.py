@@ -220,6 +220,13 @@ def _decode_vector(raw: str | list[float]) -> np.ndarray:
     return vec / norm if norm else vec  # re-normalise after the float16 round-trip
 
 
+def _embedder_identity(embedder: Embedder) -> str:
+    """Stable identity for deciding whether persisted vectors can be reused."""
+    name = type(embedder).__name__
+    model_name = getattr(embedder, "model_name", None)
+    return f"{name}:{model_name}" if model_name else name
+
+
 class MemoryStore:
     """Vector store over a JSON file.
 
@@ -471,7 +478,9 @@ class MemoryStore:
         available for relevant memories.
         """
         remaining = budget_tokens
-        latest_handoff = self.latest("handoff")
+        latest_handoff = self.latest(
+            "handoff", min_score=min_score, decay=decay
+        )
         included_handoff: Optional[MemoryEntry] = None
         excluded_ids: set[str] = set()
 
@@ -492,11 +501,23 @@ class MemoryStore:
         )
         return included_handoff, hits
 
-    def latest(self, type: str) -> Optional[MemoryEntry]:
-        """Most recently written entry of a type (e.g. the last handoff)."""
+    def latest(
+        self,
+        type: str,
+        min_score: float = 0.0,
+        decay: bool = False,
+    ) -> Optional[MemoryEntry]:
+        """Most recent entry of a type, optionally dropping one that has faded.
+
+        Unlike similarity recall, a latest-entry lookup has no query score. Its
+        best possible score is therefore 1.0, and its decay factor can be
+        compared directly with the same relevance floor used by recall.
+        """
         self._reload_if_changed()
         for entry in reversed(self._entries):
             if entry.type == type:
+                if decay and decay_factor(entry) < min_score:
+                    return None
                 return entry
         return None
 
@@ -523,6 +544,8 @@ class MemoryStore:
         if target is None:
             raise ValueError("no path set for this store")
         with _file_lock(target):
+            if target == self.path:
+                self._reload_if_changed()
             self._save_unlocked(target)
 
     def _save_unlocked(self, path: Optional[Path] = None) -> None:
@@ -532,7 +555,7 @@ class MemoryStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "format": STORE_FORMAT,
-            "embedder": type(self.embedder).__name__,
+            "embedder": _embedder_identity(self.embedder),
             "dim": self.embedder.dim,
             "entries": [
                 {**asdict(e), "embedding": _encode_vector(self._matrix[i])}
@@ -565,7 +588,7 @@ class MemoryStore:
         stored_embedder = payload.get("embedder")
         reembed = (
             stored_dim != self.embedder.dim
-            or stored_embedder != type(self.embedder).__name__
+            or stored_embedder != _embedder_identity(self.embedder)
         )
 
         entries: list[MemoryEntry] = []

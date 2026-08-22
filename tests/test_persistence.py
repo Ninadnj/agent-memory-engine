@@ -41,6 +41,22 @@ def test_two_open_stores_both_keep_their_writes(tmp_path):
     assert {"claude-code", "codex"} <= agents
 
 
+def test_explicit_save_does_not_overwrite_another_stores_newer_write(tmp_path):
+    path = tmp_path / "shared.json"
+    seed = store_at(path)
+    seed.write("Shared baseline fact about the project.", type="project")
+
+    stale = store_at(path)
+    other = store_at(path)
+    other.write("A newer fact written by another agent.", type="fact")
+    stale.save()
+
+    assert [entry.text for entry in store_at(path).all()] == [
+        "Shared baseline fact about the project.",
+        "A newer fact written by another agent.",
+    ]
+
+
 def test_parallel_processes_do_not_lose_writes(tmp_path):
     path = tmp_path / "parallel.json"
     worker = textwrap.dedent(
@@ -153,6 +169,38 @@ def test_switching_embedder_reembeds_instead_of_crashing(tmp_path):
     assert reopened.stats()["count"] == 2
     hits = reopened.recall("how do we protect admin pages", k=1)
     assert hits and "Admin routes" in hits[0].entry.text
+
+
+def test_switching_same_dimensional_models_reembeds_by_model_name(tmp_path):
+    class ModelEmbedder:
+        dim = 2
+        recommended_min_score = 0.0
+
+        def __init__(self, model_name, swapped=False):
+            self.model_name = model_name
+            self.swapped = swapped
+
+        def embed(self, texts):
+            vectors = []
+            for text in texts:
+                vector = (
+                    np.array([1.0, 0.0], dtype=np.float32)
+                    if "alpha" in text
+                    else np.array([0.0, 1.0], dtype=np.float32)
+                )
+                vectors.append(vector[::-1] if self.swapped else vector)
+            return np.array(vectors)
+
+    path = tmp_path / "models.json"
+    first = MemoryStore(path=path, embedder=ModelEmbedder("model-a"))
+    first.write("alpha memory")
+    first.write("beta memory")
+
+    reopened = MemoryStore(
+        path=path, embedder=ModelEmbedder("model-b", swapped=True)
+    )
+
+    assert reopened.recall("alpha query", k=1)[0].entry.text == "alpha memory"
 
 
 def test_save_is_atomic_and_leaves_no_partial_file(tmp_path):
