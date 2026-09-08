@@ -16,8 +16,8 @@ from __future__ import annotations
 import base64
 import json
 import os
-import re
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -44,8 +44,6 @@ MEMORY_TYPES = {
 # Bumped when the on-disk layout changes. v2 stores embeddings as base64
 # float16 instead of JSON float lists (~5x smaller, same ranking).
 STORE_FORMAT = 2
-
-_ID_RE = re.compile(r"^mem_(\d+)$")
 
 # How fast a memory's relevance fades, in days, per type. A memory's similarity
 # score is multiplied by 0.5 ** (age / half_life), so an entry at its half-life
@@ -251,7 +249,11 @@ class MemoryStore:
         agent: str = "",
     ) -> MemoryEntry:
         """Save one memory. Returns the entry — the existing one if this text
-        near-duplicates something already stored."""
+        near-duplicates something already stored.
+
+        A caller-supplied id already in the store raises ValueError, even when
+        the text is a near-duplicate. Use `update` to revise an existing memory.
+        """
         entry, _ = self.write_with_status(
             text,
             type=type,
@@ -302,6 +304,11 @@ class MemoryStore:
         dedup_threshold: float,
         agent: str,
     ) -> tuple[MemoryEntry, bool]:
+        # Check before embedding or deduplication; persisted writes reach here
+        # only after reloading under the file lock.
+        if id is not None and any(entry.id == id for entry in self._entries):
+            raise ValueError(f"duplicate memory id {id!r}; use update to revise it")
+
         vec = self.embedder.embed([text])[0]
 
         # Skip near-duplicates so repeated handoffs don't bloat the store.
@@ -312,7 +319,7 @@ class MemoryStore:
                 return self._entries[best], False
 
         entry = MemoryEntry(
-            id=id or self._next_id(),
+            id=id if id is not None else self._next_id(),
             type=type,
             text=text,
             metadata=metadata or {},
@@ -323,18 +330,12 @@ class MemoryStore:
         return entry, True
 
     def _next_id(self) -> str:
-        """Smallest unused `mem_NNNN`. Derived from the ids actually present, so
-        it survives explicit ids, deletions and concurrent appends."""
+        """Generate an identity independent of deletions and store lifetimes."""
         used = {e.id for e in self._entries}
-        highest = 0
-        for entry_id in used:
-            match = _ID_RE.match(entry_id)
-            if match:
-                highest = max(highest, int(match.group(1)))
-        candidate = highest + 1
-        while f"mem_{candidate:04d}" in used:
-            candidate += 1
-        return f"mem_{candidate:04d}"
+        candidate = f"mem_{uuid.uuid4().hex}"
+        while candidate in used:
+            candidate = f"mem_{uuid.uuid4().hex}"
+        return candidate
 
     def forget(self, entry_id: str) -> bool:
         """Delete one memory. Returns False if that id isn't in the store.
