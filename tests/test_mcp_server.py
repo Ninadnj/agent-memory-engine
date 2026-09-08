@@ -121,6 +121,24 @@ def test_update_and_forget_report_missing_ids(server):
     assert "No memory with id" in call(server, "memory_forget", id="mem_9999")
 
 
+@pytest.mark.parametrize("tool", ["memory_update", "memory_forget"])
+def test_stale_id_cannot_modify_replacement_through_mcp(server, tool):
+    saved = call(server, "memory_write", text="The retired staging server uses port 5002.")
+    old_id = saved.split()[1]
+    assert "Forgot" in call(server, "memory_forget", id=old_id)
+    saved = call(server, "memory_write", text="Customer invoices are archived monthly.")
+    replacement_id = saved.split()[1]
+    before = call(server, "memory_list")
+    args = {"id": old_id}
+    if tool == "memory_update":
+        args["text"] = "Incorrect stale update."
+
+    assert call(server, tool, **args) == f"No memory with id {old_id}."
+    assert replacement_id != old_id
+    assert call(server, "memory_list") == before
+    assert "Customer invoices" in call(server, "memory_recall", query="invoices archived")
+
+
 def test_handoff_is_picked_up_by_a_second_agent_on_the_same_store(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_MEMORY_EMBEDDER", "hashing")
     path = tmp_path / "shared.json"

@@ -6,6 +6,8 @@ These tests cover that, plus the recovery paths around switching embedders and
 crash-safe writes.
 """
 
+import base64
+from dataclasses import asdict
 import json
 import subprocess
 import sys
@@ -132,6 +134,93 @@ def test_ids_survive_explicit_ids_and_deletions(tmp_path):
     ids = [e.id for e in store.all()]
     assert len(set(ids)) == len(ids)
     assert "mem_0001" in ids
+
+
+@pytest.mark.parametrize("operation", ["update", "forget"])
+@pytest.mark.parametrize("mode", ["same_store", "reopened", "two_instances"])
+def test_stale_id_cannot_modify_persisted_replacement(tmp_path, operation, mode):
+    path = tmp_path / "ids.json"
+    writer = store_at(path)
+    old_id = writer.write("The retired staging server uses port 5002.").id
+    holder = store_at(path) if mode == "two_instances" else writer
+    assert writer.forget(old_id) is True
+    if mode == "reopened":
+        writer = store_at(path)
+    replacement = writer.write("Customer invoices are archived monthly.")
+    if mode == "reopened":
+        holder = store_at(path)
+    before = path.read_bytes()
+
+    if operation == "update":
+        assert holder.update(old_id, text="Incorrect stale update.") is None
+    else:
+        assert holder.forget(old_id) is False
+
+    assert replacement.id != old_id
+    assert path.read_bytes() == before
+    assert store_at(path).all() == [replacement]
+
+
+@pytest.mark.parametrize("entry_id", ["caller-note", "mem_0001"])
+@pytest.mark.parametrize("same_text", [False, True])
+def test_duplicate_explicit_id_from_second_store_leaves_file_unchanged(
+    tmp_path, entry_id, same_text
+):
+    path = tmp_path / "shared-ids.json"
+    first = store_at(path)
+    second = store_at(path)  # opened before the conflicting id was written
+    original = first.write("Bookings are stored in UTC.", id=entry_id)
+    before = path.read_bytes()
+    text = original.text if same_text else "Customer invoices are archived monthly."
+
+    with pytest.raises(ValueError, match=f"duplicate memory id.*{entry_id}"):
+        second.write(text, id=entry_id, agent="codex")
+
+    assert path.read_bytes() == before
+    assert first.all() == second.all() == store_at(path).all() == [original]
+    assert not path.with_name(path.name + ".lock").exists()
+    fresh = second.write("Uploaded images are private.", id="another-caller-note")
+    assert fresh.id == "another-caller-note"
+    assert store_at(path).all() == [original, fresh]
+
+
+@pytest.mark.parametrize("format_version", [1, 2])
+def test_legacy_numeric_ids_remain_readable_updateable_and_deletable(
+    tmp_path, format_version
+):
+    path = tmp_path / "legacy-ids.json"
+    embedder = HashingEmbedder()
+    text = "Bookings are stored in UTC."
+    vector = embedder.embed([text])[0]
+    raw = {
+        "id": "mem_0001", "type": "decision", "text": text,
+        "metadata": {"source": "legacy"}, "agent": "claude-code",
+        "created_at": "2025-01-01T00:00:00+00:00",
+        "embedding": vector.tolist() if format_version == 1 else
+        base64.b64encode(vector.astype(np.float16).tobytes()).decode("ascii"),
+    }
+    payload = {"embedder": "HashingEmbedder", "dim": embedder.dim, "entries": [raw]}
+    if format_version == 2:
+        payload["format"] = 2
+    path.write_text(json.dumps(payload))
+    before = path.read_bytes()
+
+    store = store_at(path)
+    expected = {key: value for key, value in raw.items() if key != "embedding"}
+    assert [asdict(entry) for entry in store.all()] == [expected]
+    assert path.read_bytes() == before  # opening never rewrites existing ids
+    assert store.recall("Bookings UTC", k=1)[0].entry.id == "mem_0001"
+    fresh = store.write("Customer invoices are archived monthly.")
+    assert fresh.id != "mem_0001"
+
+    reopened = store_at(path)
+    assert asdict(reopened.all()[0]) == expected
+    updated = reopened.update("mem_0001", text="Bookings are displayed in local time.")
+    assert updated is not None and updated.id == "mem_0001"
+    expected["text"] = updated.text
+    assert asdict(store_at(path).all()[0]) == expected
+    assert store_at(path).forget("mem_0001") is True
+    assert store_at(path).all() == [fresh]
 
 
 def test_switching_embedder_reembeds_instead_of_crashing(tmp_path):
