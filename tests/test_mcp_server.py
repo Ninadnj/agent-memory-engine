@@ -7,6 +7,7 @@ through the real server object on whatever `mcp` version is installed.
 """
 
 import asyncio
+import json
 
 import pytest
 
@@ -41,6 +42,8 @@ def test_server_builds_and_exposes_the_documented_tools(server):
         "memory_forget",
         "memory_list",
         "memory_stats",
+        "memory_get",
+        "memory_supersede",
     } <= names
 
 
@@ -55,7 +58,7 @@ def test_write_reports_duplicates_instead_of_claiming_a_save(server):
     first = call(server, "memory_write", text=text, type="decision")
     second = call(server, "memory_write", text=text, type="decision")
     assert first.startswith("Saved")
-    assert "Not saved" in second and "near-duplicate" in second
+    assert "Not saved" in second and "exact duplicate" in second
 
 
 def test_write_rejects_unknown_type(server):
@@ -90,13 +93,9 @@ def test_boot_never_exceeds_its_budget(server):
 
     for budget in (30, 60, 120, 300):
         out = call(server, "memory_boot", task="continue the booking work", budget_tokens=budget)
-        # Strip the rendering scaffolding; only memory text is charged to the budget.
-        body = out.replace("Last handoff [handoff · claude-code]: ", "")
-        body = "\n".join(line.lstrip("- ") for line in body.splitlines())
-        content = "".join(
-            part.split("] ", 1)[-1] if "] " in part else part for part in body.splitlines()
-        )
-        assert count_tokens(content) <= budget, f"budget {budget} exceeded: {out!r}"
+        # All rendered labels, IDs and source references count toward the cap.
+        assert count_tokens(out) <= budget, f"budget {budget} exceeded: {out!r}"
+
 
 
 def test_boot_on_an_empty_store(server):
@@ -108,28 +107,28 @@ def test_update_and_forget(server):
     listed = call(server, "memory_list")
     entry_id = listed.split()[1]
 
-    assert "Updated" in call(server, "memory_update", id=entry_id, text="The API listens on port 8080.")
+    assert "Updated" in call(server, "memory_update", id=entry_id, text="The API listens on port 8080.", expected_revision=1)
     assert "8080" in call(server, "memory_recall", query="which port does the API listen on")
 
-    assert "Forgot" in call(server, "memory_forget", id=entry_id)
-    assert "No memory with id" in call(server, "memory_forget", id=entry_id)
+    assert "Forgot" in call(server, "memory_forget", id=entry_id, expected_revision=2)
+    assert "No memory with id" in call(server, "memory_forget", id=entry_id, expected_revision=2)
     assert call(server, "memory_list") == "No memories stored."
 
 
 def test_update_and_forget_report_missing_ids(server):
-    assert "No memory with id" in call(server, "memory_update", id="mem_9999", text="x")
-    assert "No memory with id" in call(server, "memory_forget", id="mem_9999")
+    assert "No memory with id" in call(server, "memory_update", id="mem_9999", text="x", expected_revision=1)
+    assert "No memory with id" in call(server, "memory_forget", id="mem_9999", expected_revision=1)
 
 
 @pytest.mark.parametrize("tool", ["memory_update", "memory_forget"])
 def test_stale_id_cannot_modify_replacement_through_mcp(server, tool):
     saved = call(server, "memory_write", text="The retired staging server uses port 5002.")
     old_id = saved.split()[1]
-    assert "Forgot" in call(server, "memory_forget", id=old_id)
+    assert "Forgot" in call(server, "memory_forget", id=old_id, expected_revision=1)
     saved = call(server, "memory_write", text="Customer invoices are archived monthly.")
     replacement_id = saved.split()[1]
     before = call(server, "memory_list")
-    args = {"id": old_id}
+    args = {"id": old_id, "expected_revision": 1}
     if tool == "memory_update":
         args["text"] = "Incorrect stale update."
 
@@ -166,3 +165,31 @@ def test_stats_reports_the_store(server):
     call(server, "memory_write", text="Bookings are stored in UTC.", type="decision")
     out = call(server, "memory_stats")
     assert "1 memories" in out and "decision=1" in out
+
+
+@pytest.mark.parametrize("tool", ["memory_update", "memory_forget", "memory_supersede"])
+def test_correction_tools_require_revision_and_reject_stale_read(server, tool):
+    saved = call(server, "memory_write", text="Retry three times.")
+    entry_id = saved.split()[1]
+    args = {"id": entry_id}
+    if tool != "memory_forget":
+        args["text"] = "Retry seven times."
+    schema = next(t.model_dump(by_alias=True)["inputSchema"] for t in asyncio.run(server.list_tools()) if t.name == tool)
+    assert "expected_revision" in schema["required"]
+    with pytest.raises(Exception, match="expected_revision"):
+        call(server, tool, **args)
+    call(server, "memory_update", id=entry_id, text="Retry five times.", expected_revision=1)
+    before = call(server, "memory_get", id=entry_id)
+    with pytest.raises(Exception, match="revision"):
+        call(server, tool, **args, expected_revision=1)
+    assert call(server, "memory_get", id=entry_id) == before
+
+
+def test_supersession_exposes_history_but_recalls_only_current_decision(server):
+    old = call(server, "memory_write", text="Retry three times.", source={"path": "policy.py"}).split()[1]
+    new = call(server, "memory_supersede", id=old, text="Retry five times.", expected_revision=1).split()[1]
+    retired = json.loads(call(server, "memory_get", id=old))
+    assert retired["status"] == "superseded" and retired["superseded_by"] == new
+    assert retired["history"][0]["source"] == {"path": "policy.py"}
+    out = call(server, "memory_recall", query="Retry", budget_tokens=300)
+    assert "five" in out and "three" not in out

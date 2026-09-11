@@ -25,7 +25,9 @@ Two rules hold everywhere in this module:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -33,6 +35,7 @@ from pathlib import Path
 from typing import Optional
 
 from .embeddings import default_min_score
+from .rendering import pack_blocks, recall_context
 from .store import (
     PROJECT_STORE_DIR,
     MemoryStore,
@@ -65,7 +68,7 @@ def _git(root: Path, *args: str) -> Optional[str]:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return out.stdout.strip() if out.returncode == 0 else None
+    return out.stdout.rstrip("\r\n") if out.returncode == 0 else None
 
 
 def _open_store(payload: dict) -> Optional[MemoryStore]:
@@ -74,7 +77,8 @@ def _open_store(payload: dict) -> Optional[MemoryStore]:
     try:
         path = default_store_path(cwd)
         return MemoryStore(path=path)
-    except Exception:  # a broken store must not take the session with it
+    except Exception as exc:  # a broken store must not take the session with it
+        print(f"[agent-memory] could not open store: {exc}", file=sys.stderr)
         return None
 
 
@@ -91,15 +95,6 @@ def _context_output(event: str, context: str) -> dict:
     }
 
 
-def _render(hits) -> str:
-    return "\n".join(
-        f"- [{h.entry.type}"
-        + (f" · {h.entry.agent}" if h.entry.agent else "")
-        + f"] {h.entry.text}"
-        for h in hits
-    )
-
-
 # ---- SessionStart ----------------------------------------------------------
 def session_start(payload: dict) -> dict:
     """Inject the last handoff plus orientation memories, and mark the repo state.
@@ -114,46 +109,17 @@ def session_start(payload: dict) -> dict:
 
     _write_marker(payload, store)
 
-    budget = SESSION_START_BUDGET
-    parts: list[str] = []
-
-    handoff = store.latest("handoff")
-    if handoff is not None and handoff.tokens <= budget:
-        parts.append(f"Last handoff [{handoff.agent or 'unknown'}]: {handoff.text}")
-        budget -= handoff.tokens
-
-    # What the previous session actually did. Complements the handoff rather
-    # than repeating it: the handoff says why, this says what changed. Without
-    # it the SessionEnd autosave would be written and never read.
-    note = store.latest("worklog")
-    if note is not None and note.tokens <= budget:
-        parts.append(f"Last session: {note.text}")
-        budget -= note.tokens
-
-    # Most recent durable facts, newest first, until the budget runs out.
-    orientation = []
-    for entry in reversed(store.all()):
-        if entry.type not in ORIENTATION_TYPES:
-            continue
-        if entry.tokens > budget:
-            continue
-        orientation.append(entry)
-        budget -= entry.tokens
-        if len(orientation) >= 5:
-            break
-    if orientation:
-        parts.append(
-            "Project memories:\n"
-            + "\n".join(f"- [{e.type}] {e.text}" for e in orientation)
-        )
-
-    if not parts:
-        return {}
-    parts.append(
-        "(From agent-memory. Save durable facts with memory_write, and call "
-        "memory_handoff before the session ends.)"
-    )
-    return _context_output("SessionStart", "\n\n".join(parts))
+    blocks = []
+    handoff = store.latest("handoff", fresh=True)
+    if handoff is not None:
+        blocks.append(f"Last handoff [{handoff.agent or 'unknown'}]: {handoff.text}")
+    note = store.latest("worklog", fresh=True)
+    if note is not None:
+        blocks.append(f"Last session: {note.text}")
+    orientation = [entry for entry in reversed(store.all())
+                   if entry.type in ORIENTATION_TYPES and entry.status == "active"]
+    blocks.extend(f"- [{entry.type}] {entry.text}" for entry in orientation)
+    return _context_output("SessionStart", pack_blocks(blocks, SESSION_START_BUDGET, limit=7))
 
 
 def _write_marker(payload: dict, store: MemoryStore) -> None:
@@ -167,11 +133,13 @@ def _write_marker(payload: dict, store: MemoryStore) -> None:
         "branch": _git(root, "rev-parse", "--abbrev-ref", "HEAD"),
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "root": str(root),
+        "dirty_state": _dirty_state(root),
     }
     try:
         directory = _sessions_dir(store.path)
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"{session_id}.json").write_text(json.dumps(marker))
+        marker_file = _marker_file(store.path, session_id)
+        marker_file.write_text(json.dumps(marker))
     except OSError:
         pass  # a missing marker only costs us the autosave
 
@@ -179,23 +147,23 @@ def _write_marker(payload: dict, store: MemoryStore) -> None:
 # ---- UserPromptSubmit ------------------------------------------------------
 def user_prompt(payload: dict) -> dict:
     """Inject memories relevant to the prompt the user just submitted."""
-    prompt = (payload.get("user_input") or "").strip()
+    # `prompt` is the documented client field. Keep the previous alias for
+    # scripts built against v0.3; the real field always takes precedence.
+    prompt = payload.get("prompt", payload.get("user_input", ""))
+    if not isinstance(prompt, str):
+        print("[agent-memory] prompt field must be text", file=sys.stderr)
+        return {}
+    prompt = prompt.strip()
     if len(prompt) < 12:  # "yes", "continue" — nothing to match on
         return {}
     store = _open_store(payload)
     if store is None:
         return {}
-    hits = store.recall(
-        prompt,
-        k=3,
-        budget_tokens=PROMPT_RECALL_BUDGET,
-        min_score=default_min_score(store.embedder),
-    )
-    if not hits:
+    context = recall_context(store, prompt, k=3, budget=PROMPT_RECALL_BUDGET,
+                             min_score=default_min_score(store.embedder))
+    if not context:
         return {}
-    return _context_output(
-        "UserPromptSubmit", "Relevant memories:\n" + _render(hits)
-    )
+    return _context_output("UserPromptSubmit", context)
 
 
 # ---- SessionEnd ------------------------------------------------------------
@@ -209,7 +177,7 @@ def session_end(payload: dict) -> dict:
     if store is None:
         return {}
     session_id = payload.get("session_id")
-    marker_file = _sessions_dir(store.path) / f"{session_id}.json" if session_id else None
+    marker_file = _marker_file(store.path, session_id) if session_id else None
 
     marker = {}
     if marker_file is not None and marker_file.exists():
@@ -232,7 +200,8 @@ def session_end(payload: dict) -> dict:
     if not summary:
         return {}  # nothing changed; do not pollute the store
     try:
-        store.write(summary, type="worklog", agent=_agent_name())
+        store.write(summary, type="worklog", agent=_agent_name(),
+                    source={"event": "SessionEnd", "commit": _git(root, "rev-parse", "HEAD") or ""})
     except Exception:
         return {}
     return {"systemMessage": "agent-memory: saved a session note."}
@@ -249,14 +218,9 @@ def _describe_session(root: Path, marker: dict) -> Optional[str]:
         log = _git(root, "log", "--format=%s", f"{start_head}..{head}")
         commits = [line for line in (log or "").splitlines() if line]
 
-    status = _git(root, "status", "--porcelain") or ""
-    dirty = sorted(
-        path
-        for path in {
-            line[3:].split(" -> ")[-1] for line in status.splitlines() if len(line) > 3
-        }
-        if not _is_store_path(path)
-    )
+    state = _dirty_state(root)
+    before = marker.get("dirty_state", {})
+    dirty = sorted(path for path, fingerprint in state.items() if before.get(path) != fingerprint)
 
     if not commits and not dirty:
         return None
@@ -269,8 +233,40 @@ def _describe_session(root: Path, marker: dict) -> Optional[str]:
     if dirty:
         shown = ", ".join(dirty[:6])
         more = f" (+{len(dirty) - 6} more)" if len(dirty) > 6 else ""
-        bits.append(f"Uncommitted changes in: {shown}{more}.")
+        bits.append(f"Working-tree changes observed in: {shown}{more}.")
     return " ".join(bits)
+
+
+def _marker_file(store_path: Path, session_id: str) -> Path:
+    if not isinstance(session_id, str) or not session_id or len(session_id) > 200:
+        raise ValueError("invalid hook session_id")
+    # Keep conventional IDs readable; arbitrary client IDs cannot escape the
+    # sessions directory or inject path components.
+    safe = session_id if all(c.isalnum() or c in "-_" for c in session_id) else hashlib.sha256(session_id.encode()).hexdigest()
+    return _sessions_dir(store_path) / f"{safe}.json"
+
+
+def _dirty_state(root: Path) -> dict[str, str]:
+    raw = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all") or ""
+    records = iter(raw.split("\0"))
+    state = {}
+    for record in records:
+        if len(record) < 4:
+            continue
+        status, path = record[:2], record[3:]
+        if "R" in status or "C" in status:
+            next(records, None)  # in -z form, the destination appears first
+        if _is_store_path(path):
+            continue
+        full = root / path
+        try:
+            # Metadata avoids reading large/binary files or following symlinks.
+            st = full.lstat()
+            signature = f"{status}:{st.st_size}:{st.st_mtime_ns}"
+        except OSError:
+            signature = status + ":missing"
+        state[path] = signature
+    return state
 
 
 def _is_store_path(path: str) -> bool:
@@ -324,7 +320,7 @@ def _executable() -> str:
 def _hook_entry(event: str) -> dict:
     entry = {
         "type": "command",
-        "command": f"{_executable()} hook {_CLI_NAME[event]}",
+        "command": f"{subprocess.list2cmdline([_executable()]) if os.name == 'nt' else shlex.quote(_executable())} hook {_CLI_NAME[event]}",
     }
     if event == "UserPromptSubmit":
         entry["timeout"] = 20  # the event's own limit is 30s

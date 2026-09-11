@@ -207,6 +207,8 @@ def test_legacy_numeric_ids_remain_readable_updateable_and_deletable(
 
     store = store_at(path)
     expected = {key: value for key, value in raw.items() if key != "embedding"}
+    expected.update(updated_at=None, updated_by="", revision=1, status="active",
+                    superseded_by=None, source={}, history=[])
     assert [asdict(entry) for entry in store.all()] == [expected]
     assert path.read_bytes() == before  # opening never rewrites existing ids
     assert store.recall("Bookings UTC", k=1)[0].entry.id == "mem_0001"
@@ -217,7 +219,10 @@ def test_legacy_numeric_ids_remain_readable_updateable_and_deletable(
     assert asdict(reopened.all()[0]) == expected
     updated = reopened.update("mem_0001", text="Bookings are displayed in local time.")
     assert updated is not None and updated.id == "mem_0001"
+    previous = {key: value for key, value in expected.items() if key != "history"}
     expected["text"] = updated.text
+    assert updated.updated_at is not None
+    expected.update(updated_at=updated.updated_at, revision=2, history=[previous])
     assert asdict(store_at(path).all()[0]) == expected
     assert store_at(path).forget("mem_0001") is True
     assert store_at(path).all() == [fresh]

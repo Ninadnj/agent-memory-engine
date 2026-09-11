@@ -14,11 +14,12 @@ pointed at one store append to it instead of overwriting each other.
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
 import os
-import time
+import tempfile
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,8 @@ from typing import Iterator, Optional
 
 import numpy as np
 
-from .embeddings import Embedder, default_embedder
+from .embeddings import Embedder, HashingEmbedder, SentenceTransformerEmbedder, default_embedder, embedding_config
+from ._locking import _file_lock
 from .tokens import count_tokens
 
 # Memory categories mirror the original Markdown scaffold (PROJECT, DECISIONS,
@@ -43,7 +45,44 @@ MEMORY_TYPES = {
 
 # Bumped when the on-disk layout changes. v2 stores embeddings as base64
 # float16 instead of JSON float lists (~5x smaller, same ranking).
-STORE_FORMAT = 2
+STORE_FORMAT = 3
+MAX_TEXT_CHARS = 20_000
+MAX_METADATA_BYTES = 16_384
+MAX_HISTORY = 20
+MAX_STORE_BYTES = 128 * 1024 * 1024
+
+
+class MemoryConflictError(ValueError):
+    """The caller's revision or store snapshot is no longer current."""
+
+
+class StoreFormatError(ValueError):
+    """An unreadable or invalid store was left untouched."""
+
+
+def _validate_text(text: str) -> None:
+    if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
+        raise ValueError(f"memory text must contain 1..{MAX_TEXT_CHARS} characters")
+
+
+def _validate_mapping(value: dict, name: str) -> None:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        raise ValueError(f"{name} must be an object with string keys")
+    try:
+        encoded = json.dumps(value, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must contain finite JSON values") from exc
+    if len(encoded) > MAX_METADATA_BYTES:
+        raise ValueError(f"{name} exceeds {MAX_METADATA_BYTES} bytes")
+
+
+def _validate_limits(k: int, budget: Optional[int], min_score: float) -> None:
+    if isinstance(k, bool) or not isinstance(k, int) or k < 0:
+        raise ValueError("k must be a nonnegative integer")
+    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < 0):
+        raise ValueError("budget_tokens must be a nonnegative integer or None")
+    if not isinstance(min_score, (int, float)) or not np.isfinite(min_score) or not -1 <= min_score <= 1:
+        raise ValueError("min_score must be finite and between -1 and 1")
 
 # How fast a memory's relevance fades, in days, per type. A memory's similarity
 # score is multiplied by 0.5 ** (age / half_life), so an entry at its half-life
@@ -137,6 +176,13 @@ class MemoryEntry:
     # Which agent wrote this (e.g. "claude-code", "codex", "cursor"). Lets one
     # store be shared between agents while keeping provenance visible.
     agent: str = ""
+    updated_at: Optional[str] = None
+    updated_by: str = ""
+    revision: int = 1
+    status: str = "active"
+    superseded_by: Optional[str] = None
+    source: dict = field(default_factory=dict)
+    history: list[dict] = field(default_factory=list)
 
     @property
     def tokens(self) -> int:
@@ -149,10 +195,47 @@ class RecallHit:
     score: float
 
 
+def _entry_from_raw(raw: dict, *, history: bool = True) -> MemoryEntry:
+    if not isinstance(raw, dict):
+        raise ValueError("each memory must be an object")
+    known = MemoryEntry.__dataclass_fields__
+    entry = MemoryEntry(**{key: value for key, value in raw.items() if key in known})
+    _validate_text(entry.text)
+    if entry.type not in MEMORY_TYPES:
+        raise ValueError(f"unknown memory type {entry.type!r}")
+    if not isinstance(entry.id, str) or len(entry.id) > 512:
+        raise ValueError("invalid memory id")
+    for name in ("created_at", "agent", "updated_by"):
+        if not isinstance(getattr(entry, name), str):
+            raise ValueError(f"{name} must be a string")
+    if entry.updated_at is not None and not isinstance(entry.updated_at, str):
+        raise ValueError("updated_at must be a string or null")
+    if isinstance(entry.revision, bool) or not isinstance(entry.revision, int) or entry.revision < 1:
+        raise ValueError("revision must be a positive integer")
+    if entry.status not in ("active", "superseded"):
+        raise ValueError("invalid memory status")
+    if entry.superseded_by is not None and not isinstance(entry.superseded_by, str):
+        raise ValueError("superseded_by must be an id or null")
+    if entry.status == "superseded" and entry.superseded_by is None:
+        raise ValueError("superseded memory must name its replacement")
+    _validate_mapping(entry.metadata, "metadata")
+    _validate_mapping(entry.source, "source")
+    if not isinstance(entry.history, list) or len(entry.history) > MAX_HISTORY:
+        raise ValueError(f"history must contain at most {MAX_HISTORY} revisions")
+    if history:
+        for snapshot in entry.history:
+            if not isinstance(snapshot, dict) or "history" in snapshot:
+                raise ValueError("invalid revision snapshot")
+            previous = _entry_from_raw(snapshot, history=False)
+            if previous.id != entry.id or previous.revision >= entry.revision:
+                raise ValueError("invalid revision history identity or order")
+    return entry
+
+
 def age_in_days(entry: MemoryEntry, now: Optional[datetime] = None) -> float:
     """How old a memory is. 0.0 when the timestamp is unreadable or in the future."""
     try:
-        written = datetime.fromisoformat(entry.created_at)
+        written = datetime.fromisoformat(entry.updated_at or entry.created_at)
     except (TypeError, ValueError):
         return 0.0  # an unparseable timestamp must not silently bury the memory
     if written.tzinfo is None:
@@ -169,39 +252,22 @@ def decay_factor(entry: MemoryEntry, now: Optional[datetime] = None) -> float:
     return float(0.5 ** (age_in_days(entry, now) / half_life))
 
 
-@contextmanager
-def _file_lock(target: Path, timeout: float = 10.0, stale_after: float = 60.0) -> Iterator[None]:
-    """Cross-process advisory lock for one store file.
+def startup_fresh(entry: MemoryEntry) -> bool:
+    """Startup notes expire after two half-lives (handoff 14d, worklog 42d).
 
-    An exclusive-create lock file is portable (POSIX and Windows) and needs no
-    extra dependency. A lock older than `stale_after` is assumed to belong to a
-    crashed process and is broken, so a dead agent can't wedge the store.
+    Ordinary recall still supports explicit inspection of aged content.
+    Unparseable startup timestamps are omitted rather than treated as current.
     """
-    lock = target.with_name(target.name + ".lock")
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
-        except FileExistsError:
-            try:
-                if time.time() - lock.stat().st_mtime > stale_after:
-                    lock.unlink(missing_ok=True)
-                    continue
-            except FileNotFoundError:
-                continue  # released while we looked; retry immediately
-            if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"could not lock {target} after {timeout}s; "
-                    f"remove {lock} if no agent is running"
-                )
-            time.sleep(0.02)
+    if entry.status != "active":
+        return False
+    half_life = HALF_LIFE_DAYS.get(entry.type)
+    if half_life is None:
+        return True
     try:
-        os.close(fd)
-        yield
-    finally:
-        lock.unlink(missing_ok=True)
+        datetime.fromisoformat(entry.updated_at or entry.created_at)
+    except (TypeError, ValueError):
+        return False
+    return age_in_days(entry) <= 2 * half_life
 
 
 def _encode_vector(vec: np.ndarray) -> str:
@@ -211,7 +277,7 @@ def _encode_vector(vec: np.ndarray) -> str:
 
 def _decode_vector(raw: str | list[float]) -> np.ndarray:
     if isinstance(raw, str):
-        vec = np.frombuffer(base64.b64decode(raw), dtype=np.float16).astype(np.float32)
+        vec = np.frombuffer(base64.b64decode(raw, validate=True), dtype=np.float16).astype(np.float32)
     else:  # v1 stores kept a plain JSON list of floats
         vec = np.asarray(raw, dtype=np.float32)
     norm = float(np.linalg.norm(vec))
@@ -231,100 +297,100 @@ class MemoryStore:
         self, path: Optional[str | Path] = None, embedder: Optional[Embedder] = None
     ) -> None:
         self.path = Path(path).expanduser() if path else None
-        self.embedder = embedder or default_embedder()
+        self.embedder = embedder if embedder is not None else self._configured_embedder()
         self._entries: list[MemoryEntry] = []
         self._matrix = np.zeros((0, self.embedder.dim), dtype=np.float32)
-        self._stamp: Optional[tuple[int, int]] = None
+        self._stamp: Optional[tuple[int, int, int]] = None
         if self.path and self.path.exists():
             self.load()
 
-    # ---- writing -------------------------------------------------------
-    def write(
-        self,
-        text: str,
-        type: str = "fact",
-        metadata: Optional[dict] = None,
-        id: Optional[str] = None,
-        dedup_threshold: float = 0.97,
-        agent: str = "",
-    ) -> MemoryEntry:
-        """Save one memory. Returns the entry — the existing one if this text
-        near-duplicates something already stored.
+    def _configured_embedder(self) -> Embedder:
+        """An existing store pins its backend unless the caller overrides it."""
+        if self.path and self.path.exists() and os.environ.get("AGENT_MEMORY_EMBEDDER", "auto") == "auto":
+            try:
+                if self.path.stat().st_size > MAX_STORE_BYTES:
+                    raise ValueError("store exceeds the supported local file size")
+                payload = json.loads(self.path.read_text(encoding="utf-8"))
+                config = payload.get("embedding_config", {})
+                if config.get("backend") == "hashing":
+                    return HashingEmbedder(dim=config["dim"])
+                if config.get("backend") == "sentence-transformers":
+                    return SentenceTransformerEmbedder(config["model"], revision=config.get("revision"))
+            except (ValueError, KeyError, AttributeError, TypeError) as exc:
+                raise StoreFormatError(f"cannot read embedding configuration in {self.path}: {exc}") from exc
+        return default_embedder()
 
-        A caller-supplied id already in the store raises ValueError, even when
-        the text is a near-duplicate. Use `update` to revise an existing memory.
+    # ---- writing -------------------------------------------------------
+    @contextmanager
+    def _transaction(self):
+        """Reload under the lock and roll back local state if persistence fails."""
+        with _file_lock(self.path) if self.path else nullcontext():
+            self._reload_if_changed()
+            entries, matrix, stamp = deepcopy(self._entries), self._matrix.copy(), self._stamp
+            try:
+                yield
+            except BaseException:
+                self._entries, self._matrix, self._stamp = entries, matrix, stamp
+                raise
+
+    def _embed(self, texts: list[str]) -> np.ndarray:
+        vectors = np.asarray(self.embedder.embed(texts), dtype=np.float32)
+        if vectors.shape != (len(texts), self.embedder.dim) or not np.isfinite(vectors).all():
+            raise ValueError("embedder returned invalid vectors")
+        return vectors
+
+    def write(
+        self, text: str, type: str = "fact", metadata: Optional[dict] = None,
+        id: Optional[str] = None, dedup_threshold: float = 0.97, agent: str = "",
+        *, source: Optional[dict] = None,
+    ) -> MemoryEntry:
+        """Save a memory, or return its exact duplicate of the same type/source.
+
+        Caller-supplied IDs are preserved; a duplicate ID raises ValueError.
+        Semantic similarity never establishes identity. ``dedup_threshold`` is
+        retained for compatibility: values above 1 disable exact deduplication.
         """
-        entry, _ = self.write_with_status(
-            text,
-            type=type,
-            metadata=metadata,
-            id=id,
-            dedup_threshold=dedup_threshold,
-            agent=agent,
-        )
-        return entry
+        return self.write_with_status(text, type, metadata, id, dedup_threshold, agent,
+                                      source=source)[0]
 
     def write_with_status(
-        self,
-        text: str,
-        type: str = "fact",
-        metadata: Optional[dict] = None,
-        id: Optional[str] = None,
-        dedup_threshold: float = 0.97,
-        agent: str = "",
+        self, text: str, type: str = "fact", metadata: Optional[dict] = None,
+        id: Optional[str] = None, dedup_threshold: float = 0.97, agent: str = "",
+        *, source: Optional[dict] = None,
     ) -> tuple[MemoryEntry, bool]:
-        """Like `write`, but also reports whether the text was actually stored.
-
-        Returns `(entry, stored)`. `stored=False` means the write was dropped as
-        a near-duplicate and `entry` is the memory already on file — callers
-        that report back to an agent must not claim a save happened.
-        """
+        """Like write; stored=False means an exact duplicate was found."""
+        _validate_text(text)
         if type not in MEMORY_TYPES:
             raise ValueError(f"unknown memory type {type!r}; use one of {MEMORY_TYPES}")
-
-        if self.path is None:
-            return self._append(text, type, metadata, id, dedup_threshold, agent)
-
-        # Under the lock: pick up anything another agent appended, then write.
-        with _file_lock(self.path):
-            self._reload_if_changed()
-            entry, stored = self._append(
-                text, type, metadata, id, dedup_threshold, agent
-            )
-            if stored:
+        _validate_mapping(metadata if metadata is not None else {}, "metadata")
+        _validate_mapping(source if source is not None else {}, "source")
+        if id is not None and (not isinstance(id, str) or len(id) > 512):
+            raise ValueError("id must be a string of at most 512 characters")
+        if not isinstance(agent, str) or len(agent) > 200:
+            raise ValueError("agent must be a string of at most 200 characters")
+        if not isinstance(dedup_threshold, (int, float)) or not np.isfinite(dedup_threshold):
+            raise ValueError("dedup_threshold must be finite")
+        with self._transaction():
+            entry, stored = self._append(text, type, metadata, id, dedup_threshold, agent, source)
+            if stored and self.path:
                 self._save_unlocked()
             return entry, stored
 
-    def _append(
-        self,
-        text: str,
-        type: str,
-        metadata: Optional[dict],
-        id: Optional[str],
-        dedup_threshold: float,
-        agent: str,
-    ) -> tuple[MemoryEntry, bool]:
-        # Check before embedding or deduplication; persisted writes reach here
-        # only after reloading under the file lock.
+    def _append(self, text, type, metadata, id, dedup_threshold, agent, source=None):
         if id is not None and any(entry.id == id for entry in self._entries):
             raise ValueError(f"duplicate memory id {id!r}; use update to revise it")
-
-        vec = self.embedder.embed([text])[0]
-
-        # Skip near-duplicates so repeated handoffs don't bloat the store.
-        if len(self._entries):
-            sims = self._matrix @ vec
-            best = int(np.argmax(sims))
-            if sims[best] >= dedup_threshold:
-                return self._entries[best], False
-
-        entry = MemoryEntry(
-            id=id if id is not None else self._next_id(),
-            type=type,
-            text=text,
-            metadata=metadata or {},
-            agent=agent,
-        )
+        # Whitespace-only differences can be ignored; case, numbers and
+        # negation can change a fact or identifier and must be preserved.
+        normalized = " ".join(text.split())
+        if id is None and dedup_threshold <= 1:
+            for entry in self._entries:
+                if (entry.status == "active" and entry.type == type
+                        and entry.source == (source or {})
+                        and " ".join(entry.text.split()) == normalized):
+                    return entry, False
+        vec = self._embed([text])[0]
+        entry = MemoryEntry(id=id if id is not None else self._next_id(), type=type, text=text,
+                            metadata=deepcopy(metadata or {}), agent=agent, source=deepcopy(source or {}))
         self._entries.append(entry)
         self._matrix = np.vstack([self._matrix, vec[None, :]])
         return entry, True
@@ -337,64 +403,107 @@ class MemoryStore:
             candidate = f"mem_{uuid.uuid4().hex}"
         return candidate
 
-    def forget(self, entry_id: str) -> bool:
-        """Delete one memory. Returns False if that id isn't in the store.
+    @staticmethod
+    def _check_revision(entry: MemoryEntry, expected: Optional[int]) -> None:
+        if expected is not None:
+            if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+                raise ValueError("expected_revision must be a positive integer")
+            if entry.revision != expected:
+                raise MemoryConflictError(
+                    f"memory {entry.id} changed: expected revision {expected}, current {entry.revision}; reload before editing"
+                )
 
-        Memory that can't be corrected is worse than no memory: a stale `state`
-        entry keeps being recalled and quietly misleads every later session.
-        """
-        if self.path is None:
-            return self._remove(entry_id)
-        with _file_lock(self.path):
-            self._reload_if_changed()
-            removed = self._remove(entry_id)
-            if removed:
-                self._save_unlocked()
-            return removed
-
-    def _remove(self, entry_id: str) -> bool:
-        for i, entry in enumerate(self._entries):
-            if entry.id == entry_id:
-                del self._entries[i]
-                self._matrix = np.delete(self._matrix, i, axis=0)
-                return True
-        return False
+    def forget(self, entry_id: str, *, expected_revision: Optional[int] = None) -> bool:
+        """Delete one memory; optionally reject a stale caller revision."""
+        with self._transaction():
+            for i, entry in enumerate(self._entries):
+                if entry.id == entry_id:
+                    self._check_revision(entry, expected_revision)
+                    del self._entries[i]
+                    self._matrix = np.delete(self._matrix, i, axis=0)
+                    if self.path:
+                        self._save_unlocked()
+                    return True
+            return False
 
     def update(
-        self,
-        entry_id: str,
-        text: Optional[str] = None,
-        type: Optional[str] = None,
+        self, entry_id: str, text: Optional[str] = None, type: Optional[str] = None,
+        *, expected_revision: Optional[int] = None, agent: str = "",
+        source: Optional[dict] = None,
     ) -> Optional[MemoryEntry]:
-        """Revise a memory in place, re-embedding when the text changes.
+        """Revise an active memory, retaining creation time and revision history.
 
-        Use this when a fact changes rather than writing a second, contradictory
-        memory — both would otherwise be recalled together.
+        No-op edits do not refresh stale information. The original author is
+        preserved; updated_by identifies the correcting agent.
         """
+        if text is not None:
+            _validate_text(text)
         if type is not None and type not in MEMORY_TYPES:
-            raise ValueError(f"unknown memory type {type!r}; use one of {MEMORY_TYPES}")
-        if self.path is None:
-            return self._revise(entry_id, text, type)
-        with _file_lock(self.path):
-            self._reload_if_changed()
-            entry = self._revise(entry_id, text, type)
-            if entry is not None:
-                self._save_unlocked()
-            return entry
+            raise ValueError(f"unknown memory type {type!r}")
+        if source is not None:
+            _validate_mapping(source, "source")
+        if not isinstance(agent, str) or len(agent) > 200:
+            raise ValueError("agent must be a string of at most 200 characters")
+        with self._transaction():
+            for i, entry in enumerate(self._entries):
+                if entry.id != entry_id:
+                    continue
+                self._check_revision(entry, expected_revision)
+                if entry.status != "active":
+                    raise MemoryConflictError(f"memory {entry_id} is superseded by {entry.superseded_by}")
+                new_text = entry.text if text is None else text
+                new_type = entry.type if type is None else type
+                new_source = entry.source if source is None else source
+                if (new_text, new_type, new_source) == (entry.text, entry.type, entry.source):
+                    return entry
+                vec = self._embed([new_text])[0] if new_text != entry.text else self._matrix[i]
+                self._record_revision(entry, agent)
+                entry.text, entry.type, entry.source = new_text, new_type, deepcopy(new_source)
+                self._matrix[i] = vec
+                if self.path:
+                    self._save_unlocked()
+                return entry
+            return None
 
-    def _revise(
-        self, entry_id: str, text: Optional[str], type: Optional[str]
-    ) -> Optional[MemoryEntry]:
-        for i, entry in enumerate(self._entries):
-            if entry.id != entry_id:
-                continue
-            if text is not None and text != entry.text:
-                entry.text = text
-                self._matrix[i] = self.embedder.embed([text])[0]
-            if type is not None:
-                entry.type = type
-            return entry
-        return None
+    @staticmethod
+    def _record_revision(entry: MemoryEntry, agent: str) -> None:
+        snapshot = asdict(entry)
+        snapshot.pop("history")
+        entry.history = (entry.history + [snapshot])[-MAX_HISTORY:]
+        entry.revision += 1
+        entry.updated_at = _now_iso()
+        entry.updated_by = agent
+
+    def supersede(
+        self, entry_id: str, text: str, *, expected_revision: int,
+        agent: str = "", source: Optional[dict] = None,
+    ) -> MemoryEntry:
+        """Atomically replace an active decision with a new identity.
+
+        The old memory remains inspectable but is excluded from normal recall.
+        """
+        _validate_text(text)
+        _validate_mapping(source if source is not None else {}, "source")
+        if not isinstance(agent, str) or len(agent) > 200:
+            raise ValueError("agent must be a string of at most 200 characters")
+        with self._transaction():
+            old = next((entry for entry in self._entries if entry.id == entry_id), None)
+            if old is None:
+                raise ValueError(f"No memory with id {entry_id}.")
+            self._check_revision(old, expected_revision)
+            if old.status != "active":
+                raise MemoryConflictError(f"memory {entry_id} is already superseded")
+            replacement, _ = self._append(text, old.type, old.metadata, None, 2, agent, source)
+            self._record_revision(old, agent)
+            old.status, old.superseded_by = "superseded", replacement.id
+            if self.path:
+                self._save_unlocked()
+            return replacement
+
+    def get(self, entry_id: str) -> Optional[MemoryEntry]:
+        """Inspect an entry, including superseded entries and recent history."""
+        self._reload_if_changed()
+        return next((entry for entry in self._entries if entry.id == entry_id), None)
 
     # ---- reading -------------------------------------------------------
     def recall(
@@ -423,10 +532,15 @@ class MemoryStore:
         alongside it. Durable types are unaffected. Combined with `min_score`,
         stale status notes eventually drop out of recall on their own.
         """
+        _validate_limits(k, budget_tokens, min_score)
+        if not isinstance(query, str) or len(query) > MAX_TEXT_CHARS:
+            raise ValueError(f"query must be a string of at most {MAX_TEXT_CHARS} characters")
+        if type_filter is not None and type_filter not in MEMORY_TYPES:
+            raise ValueError(f"unknown memory type {type_filter!r}")
         self._reload_if_changed()
-        if not self._entries:
+        if not self._entries or k == 0 or budget_tokens == 0 or not query.strip():
             return []
-        qvec = self.embedder.embed([query])[0]
+        qvec = self._embed([query])[0]
         sims = self._matrix @ qvec  # cosine: both sides are unit-norm
         if decay:
             factors = np.array(
@@ -443,6 +557,8 @@ class MemoryStore:
             if score < min_score:
                 break  # sorted by score, so nothing further can qualify
             entry = self._entries[idx]
+            if entry.status != "active":
+                continue
             if exclude_ids and entry.id in exclude_ids:
                 continue
             if type_filter and entry.type != type_filter:
@@ -471,10 +587,12 @@ class MemoryStore:
         handoff is too large to fit, it is skipped and the full budget remains
         available for relevant memories.
         """
+        _validate_limits(k, budget_tokens, min_score)
         remaining = budget_tokens
-        latest_handoff = self.latest("handoff")
+        latest_handoff = self.latest("handoff", fresh=True)
         included_handoff: Optional[MemoryEntry] = None
-        excluded_ids: set[str] = set()
+        excluded_ids = {entry.id for entry in self.all()
+                        if entry.type in ("handoff", "worklog") and not startup_fresh(entry)}
 
         if latest_handoff is not None:
             excluded_ids.add(latest_handoff.id)
@@ -493,11 +611,11 @@ class MemoryStore:
         )
         return included_handoff, hits
 
-    def latest(self, type: str) -> Optional[MemoryEntry]:
+    def latest(self, type: str, *, fresh: bool = False) -> Optional[MemoryEntry]:
         """Most recently written entry of a type (e.g. the last handoff)."""
         self._reload_if_changed()
         for entry in reversed(self._entries):
-            if entry.type == type:
+            if entry.type == type and entry.status == "active" and (not fresh or startup_fresh(entry)):
                 return entry
         return None
 
@@ -512,6 +630,8 @@ class MemoryStore:
             by_type[e.type] = by_type.get(e.type, 0) + 1
         return {
             "count": len(self._entries),
+            "active": sum(e.status == "active" for e in self._entries),
+            "superseded": sum(e.status == "superseded" for e in self._entries),
             "by_type": by_type,
             "total_tokens": sum(e.tokens for e in self._entries),
             "embedding_dim": self.embedder.dim,
@@ -520,91 +640,127 @@ class MemoryStore:
 
     # ---- persistence ---------------------------------------------------
     def save(self, path: Optional[str | Path] = None) -> None:
+        """Save only a current snapshot; export to a new path for a backup."""
         target = Path(path).expanduser() if path else self.path
         if target is None:
             raise ValueError("no path set for this store")
+        if self.path is None or target.resolve() != self.path.resolve():
+            self.export(target)
+            return
         with _file_lock(target):
+            if self._read_stamp() != self._stamp:
+                raise MemoryConflictError("store changed since this snapshot; reload before saving")
+            self._save_unlocked(target)
+
+    def export(self, path: str | Path, *, overwrite: bool = False) -> None:
+        """Write an explicit snapshot to a different file, without rebinding."""
+        target = Path(path).expanduser()
+        if self.path and target.resolve() == self.path.resolve():
+            raise ValueError("export destination must differ from the live store")
+        self._reload_if_changed()
+        with _file_lock(target):
+            if target.exists() and not overwrite:
+                raise FileExistsError(f"export destination already exists: {target}")
             self._save_unlocked(target)
 
     def _save_unlocked(self, path: Optional[Path] = None) -> None:
-        """Serialise atomically: a crash mid-write must not truncate the store."""
+        """Flush a unique temporary file before atomically replacing the store."""
         target = path or self.path
         assert target is not None
         target.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "format": STORE_FORMAT,
-            "embedder": type(self.embedder).__name__,
-            "dim": self.embedder.dim,
-            "entries": [
-                {**asdict(e), "embedding": _encode_vector(self._matrix[i])}
-                for i, e in enumerate(self._entries)
-            ],
-        }
-        tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
-        os.replace(tmp, target)  # atomic on POSIX and Windows
-        if target == self.path:
+        records = []
+        for i, entry in enumerate(self._entries):
+            raw = asdict(entry)
+            _entry_from_raw(raw)
+            raw["embedding"] = _encode_vector(self._matrix[i])
+            records.append(raw)
+        payload = {"format": STORE_FORMAT, "embedder": type(self.embedder).__name__,
+                   "embedding_config": embedding_config(self.embedder),
+                   "dim": self.embedder.dim, "entries": records}
+        content = json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False)
+        if len(content.encode("utf-8")) > MAX_STORE_BYTES:
+            raise ValueError("store exceeds the supported local file size")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
+                                             prefix=target.name + ".", suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        if self.path and target.resolve() == self.path.resolve():
             self._stamp = self._read_stamp()
 
     def load(self, path: Optional[str | Path] = None) -> None:
         target = Path(path).expanduser() if path else self.path
         if target is None or not target.exists():
             return
-        # Stamp BEFORE reading. Reads are not locked (a running server reloads on
-        # every recall), so another agent can replace the file mid-read. Stamping
-        # afterwards would pair the new stamp with the content we already read,
-        # and every later freshness check would wrongly conclude we were current.
-        # Stamping first can only cause a redundant reload, never a skipped one.
+        if self.path and target.resolve() != self.path.resolve():
+            raise ValueError("open a separate MemoryStore to load a different file")
+        # Stamp before reading: a concurrent replace must trigger another load.
         stamp = self._read_stamp() if target == self.path else None
-        payload = json.loads(target.read_text())
-
-        # A store written by a different embedder holds vectors that are not
-        # comparable with ours — different dimension (a hard crash on the first
-        # matmul) or, worse, the same dimension from a different model (silently
-        # meaningless scores). Re-embed from the text instead.
-        stored_dim = payload.get("dim")
-        stored_embedder = payload.get("embedder")
-        reembed = (
-            stored_dim != self.embedder.dim
-            or stored_embedder != type(self.embedder).__name__
-        )
-
-        entries: list[MemoryEntry] = []
-        vectors: list[Optional[np.ndarray]] = []
-        known = {f.name for f in MemoryEntry.__dataclass_fields__.values()}
-        for raw in payload.get("entries", []):
-            embedding = raw.pop("embedding", None)
-            entries.append(MemoryEntry(**{k: v for k, v in raw.items() if k in known}))
-            if embedding is None or reembed:
-                vectors.append(None)  # filled in below, in one batch
-            else:
-                vectors.append(_decode_vector(embedding))
-
-        missing = [i for i, v in enumerate(vectors) if v is None]
-        if missing:
-            fresh = self.embedder.embed([entries[i].text for i in missing])
-            for slot, i in enumerate(missing):
-                vectors[i] = fresh[slot]
-
-        self._entries = entries
-        self._matrix = (
-            np.array(vectors, dtype=np.float32)
-            if vectors
-            else np.zeros((0, self.embedder.dim), dtype=np.float32)
-        )
+        try:
+            if target.stat().st_size > MAX_STORE_BYTES:
+                raise ValueError("store exceeds the supported local file size")
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
+                raise ValueError("store must contain an entries array")
+            version = payload.get("format", 1)
+            if isinstance(version, bool) or not isinstance(version, int) or not 1 <= version <= STORE_FORMAT:
+                raise ValueError(f"unsupported store format {version!r}")
+            reembed = (payload.get("dim") != self.embedder.dim
+                       or payload.get("embedder") != type(self.embedder).__name__
+                       or payload.get("embedding_config") != embedding_config(self.embedder))
+            entries, vectors, seen = [], [], set()
+            for raw in payload["entries"]:
+                entry = _entry_from_raw(raw)
+                if entry.id in seen:
+                    raise ValueError(f"duplicate stored memory id {entry.id!r}")
+                seen.add(entry.id)
+                entries.append(entry)
+                embedding = raw.get("embedding")
+                # Validate stored vectors even when changing models. Invalid
+                # files must not be silently repaired and overwritten.
+                vector = None if embedding is None else _decode_vector(embedding)
+                if vector is not None and (vector.ndim != 1 or not np.isfinite(vector).all()
+                                           or len(vector) != payload.get("dim")):
+                    raise ValueError(f"invalid embedding for {entry.id}")
+                vectors.append(None if reembed else vector)
+            missing = [i for i, vector in enumerate(vectors) if vector is None]
+            if missing:
+                fresh = self._embed([entries[i].text for i in missing])
+                for slot, i in enumerate(missing):
+                    vectors[i] = fresh[slot]
+            matrix = (np.array(vectors, dtype=np.float32) if vectors else
+                      np.zeros((0, self.embedder.dim), dtype=np.float32))
+        except (ValueError, TypeError, KeyError, UnicodeError) as exc:
+            raise StoreFormatError(f"cannot load {target}: {exc}; original file left untouched") from exc
+        self._entries, self._matrix = entries, matrix
         if target == self.path:
             self._stamp = stamp
 
-    def _read_stamp(self) -> Optional[tuple[int, int]]:
+    def _read_stamp(self) -> Optional[tuple[int, int, int]]:
         try:
-            st = self.path.stat()  # type: ignore[union-attr]
-        except (OSError, AttributeError):
+            st = self.path.stat()
+        except FileNotFoundError:
             return None
-        return (st.st_mtime_ns, st.st_size)
+        except AttributeError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
 
     def _reload_if_changed(self) -> None:
-        """Pick up writes made by another process since we last read the file."""
-        if self.path is None or not self.path.exists():
+        if self.path is None:
             return
-        if self._read_stamp() != self._stamp:
-            self.load()
+        stamp = self._read_stamp()
+        if stamp == self._stamp:
+            return
+        if stamp is None:
+            self._entries = []
+            self._matrix = np.zeros((0, self.embedder.dim), dtype=np.float32)
+            self._stamp = None
+            return
+        self.load()

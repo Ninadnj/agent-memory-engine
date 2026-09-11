@@ -13,6 +13,8 @@ from .store import (
     MEMORY_TYPES,
     STORE_FORMAT,
     MemoryEntry,
+    MemoryConflictError,
+    StoreFormatError,
     MemoryStore,
     RecallHit,
     age_in_days,
@@ -27,6 +29,8 @@ __version__ = "0.3.0"
 __all__ = [
     "MemoryStore",
     "MemoryEntry",
+    "MemoryConflictError",
+    "StoreFormatError",
     "RecallHit",
     "MEMORY_TYPES",
     "STORE_FORMAT",
