@@ -116,10 +116,15 @@ def session_start(payload: dict) -> dict:
     note = store.latest("worklog", fresh=True)
     if note is not None:
         blocks.append(f"Last session: {note.text}")
-    orientation = [entry for entry in reversed(store.all())
-                   if entry.type in ORIENTATION_TYPES and entry.status == "active"]
+    orientation = [
+        entry
+        for entry in reversed(store.all())
+        if entry.type in ORIENTATION_TYPES and entry.status == "active"
+    ]
     blocks.extend(f"- [{entry.type}] {entry.text}" for entry in orientation)
-    return _context_output("SessionStart", pack_blocks(blocks, SESSION_START_BUDGET, limit=7))
+    return _context_output(
+        "SessionStart", pack_blocks(blocks, SESSION_START_BUDGET, limit=7)
+    )
 
 
 def _write_marker(payload: dict, store: MemoryStore) -> None:
@@ -159,8 +164,13 @@ def user_prompt(payload: dict) -> dict:
     store = _open_store(payload)
     if store is None:
         return {}
-    context = recall_context(store, prompt, k=3, budget=PROMPT_RECALL_BUDGET,
-                             min_score=default_min_score(store.embedder))
+    context = recall_context(
+        store,
+        prompt,
+        k=3,
+        budget=PROMPT_RECALL_BUDGET,
+        min_score=default_min_score(store.embedder),
+    )
     if not context:
         return {}
     return _context_output("UserPromptSubmit", context)
@@ -186,8 +196,10 @@ def session_end(payload: dict) -> dict:
         except (OSError, ValueError):
             marker = {}
 
-    root = Path(marker.get("root") or "") if marker.get("root") else find_project_root(
-        payload.get("cwd") or os.getcwd()
+    root = (
+        Path(marker.get("root") or "")
+        if marker.get("root")
+        else find_project_root(payload.get("cwd") or os.getcwd())
     )
     summary = _describe_session(root, marker) if root else None
 
@@ -200,8 +212,15 @@ def session_end(payload: dict) -> dict:
     if not summary:
         return {}  # nothing changed; do not pollute the store
     try:
-        store.write(summary, type="worklog", agent=_agent_name(),
-                    source={"event": "SessionEnd", "commit": _git(root, "rev-parse", "HEAD") or ""})
+        store.write(
+            summary,
+            type="worklog",
+            agent=_agent_name(),
+            source={
+                "event": "SessionEnd",
+                "commit": _git(root, "rev-parse", "HEAD") or "",
+            },
+        )
     except Exception:
         return {}
     return {"systemMessage": "agent-memory: saved a session note."}
@@ -220,7 +239,9 @@ def _describe_session(root: Path, marker: dict) -> Optional[str]:
 
     state = _dirty_state(root)
     before = marker.get("dirty_state", {})
-    dirty = sorted(path for path, fingerprint in state.items() if before.get(path) != fingerprint)
+    dirty = sorted(
+        path for path, fingerprint in state.items() if before.get(path) != fingerprint
+    )
 
     if not commits and not dirty:
         return None
@@ -242,7 +263,11 @@ def _marker_file(store_path: Path, session_id: str) -> Path:
         raise ValueError("invalid hook session_id")
     # Keep conventional IDs readable; arbitrary client IDs cannot escape the
     # sessions directory or inject path components.
-    safe = session_id if all(c.isalnum() or c in "-_" for c in session_id) else hashlib.sha256(session_id.encode()).hexdigest()
+    safe = (
+        session_id
+        if all(c.isalnum() or c in "-_" for c in session_id)
+        else hashlib.sha256(session_id.encode()).hexdigest()
+    )
     return _sessions_dir(store_path) / f"{safe}.json"
 
 

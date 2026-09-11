@@ -20,15 +20,38 @@ def open_store(path=None):
 
 def test_documented_prompt_event_reaches_the_hook_process(tmp_path):
     path = tmp_path / "store.json"
-    open_store(path).write("Admin routes are guarded by requireAdmin in server/auth.ts.")
-    env = {**os.environ, "AGENT_MEMORY_PATH": str(path), "AGENT_MEMORY_EMBEDDER": "hashing"}
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src") + os.pathsep + env.get("PYTHONPATH", "")
-    event = {"session_id": "test", "cwd": str(tmp_path), "hook_event_name": "UserPromptSubmit",
-             "prompt": "how do we protect the admin pages?"}
-    result = subprocess.run([sys.executable, "-m", "agent_memory.cli", "hook", "user-prompt"],
-                            input=json.dumps(event), text=True, capture_output=True, env=env, timeout=15)
+    open_store(path).write(
+        "Admin routes are guarded by requireAdmin in server/auth.ts."
+    )
+    env = {
+        **os.environ,
+        "AGENT_MEMORY_PATH": str(path),
+        "AGENT_MEMORY_EMBEDDER": "hashing",
+    }
+    env["PYTHONPATH"] = (
+        str(Path(__file__).resolve().parents[1] / "src")
+        + os.pathsep
+        + env.get("PYTHONPATH", "")
+    )
+    event = {
+        "session_id": "test",
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "how do we protect the admin pages?",
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "agent_memory.cli", "hook", "user-prompt"],
+        input=json.dumps(event),
+        text=True,
+        capture_output=True,
+        env=env,
+        timeout=15,
+    )
     assert result.returncode == 0
-    assert "requireAdmin" in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert (
+        "requireAdmin"
+        in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    )
 
 
 def test_startup_does_not_reintroduce_an_expired_handoff():
@@ -96,7 +119,7 @@ def test_same_dimension_different_model_reembeds(tmp_path):
 
         def embed(self, texts):
             self.calls += 1
-            vector = [1., 0.] if self.model_name == "a" else [0., 1.]
+            vector = [1.0, 0.0] if self.model_name == "a" else [0.0, 1.0]
             return np.array([vector] * len(texts), dtype=np.float32)
 
     path = tmp_path / "store.json"
@@ -131,7 +154,9 @@ def test_failed_embedding_update_does_not_change_the_entry():
     assert store.all()[0].text == "Use UTC timestamps."
 
 
-@pytest.mark.parametrize("text", ["", "  ", "x" * 20001], ids=["empty", "whitespace", "oversized"])
+@pytest.mark.parametrize(
+    "text", ["", "  ", "x" * 20001], ids=["empty", "whitespace", "oversized"]
+)
 def test_invalid_memory_text_is_rejected_before_writing(tmp_path, text):
     path = tmp_path / "store.json"
     store = open_store(path)

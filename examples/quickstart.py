@@ -52,6 +52,6 @@ print(f"\nMemories recalled for an unrelated task: {len(unrelated)} "
 
 # --- correcting memory ----------------------------------------------------
 stale = store.write("Deploys are triggered from the old Jenkins box.", type="state")
-store.update(stale.id, text="Deploys are triggered from GitHub Actions.")
-store.forget(stale.id)
+store.update(stale.id, text="Deploys are triggered from GitHub Actions.", expected_revision=1)
+store.forget(stale.id, expected_revision=2)
 print(f"Memories after update + forget: {store.stats()['count']}")

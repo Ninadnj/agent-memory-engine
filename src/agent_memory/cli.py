@@ -79,15 +79,25 @@ def cmd_write(args) -> None:
 
 
 def _source(args) -> dict | None:
-    source = {key: value for key, value in {
-        "path": getattr(args, "source_path", None), "commit": getattr(args, "source_commit", None),
-    }.items() if value is not None}
+    source = {
+        key: value
+        for key, value in {
+            "path": getattr(args, "source_path", None),
+            "commit": getattr(args, "source_commit", None),
+        }.items()
+        if value is not None
+    }
     return source or None
 
 
 def cmd_recall(args) -> None:
     store = _store(args)
-    options = dict(k=args.k, budget=args.budget, min_score=_min_score(args, store), decay=not args.no_decay)
+    options = dict(
+        k=args.k,
+        budget=args.budget,
+        min_score=_min_score(args, store),
+        decay=not args.no_decay,
+    )
     if args.explain:
         print(json.dumps(explain_recall(store, args.query, **options), indent=2))
         return
@@ -112,7 +122,9 @@ def cmd_handoff(args) -> None:
 
 def cmd_boot(args) -> None:
     store = _store(args)
-    result = boot_context(store, args.task, budget=args.budget, min_score=_min_score(args, store))
+    result = boot_context(
+        store, args.task, budget=args.budget, min_score=_min_score(args, store)
+    )
     if result:
         print(result, end="")
 
@@ -122,7 +134,9 @@ def cmd_list(args) -> None:
 
     if args.limit < 0:
         raise ValueError("limit must be nonnegative")
-    entries = [e for e in reversed(_store(args).all()) if not args.type or e.type == args.type]
+    entries = [
+        e for e in reversed(_store(args).all()) if not args.type or e.type == args.type
+    ]
     if not entries:
         print("No memories stored.")
         return
@@ -136,8 +150,13 @@ def cmd_list(args) -> None:
 
 
 def cmd_update(args) -> None:
-    entry = _store(args).update(args.id, text=args.text, expected_revision=args.expected_revision,
-                                agent=args.agent, source=_source(args))
+    entry = _store(args).update(
+        args.id,
+        text=args.text,
+        expected_revision=args.expected_revision,
+        agent=args.agent,
+        source=_source(args),
+    )
     print(f"Updated {entry.id}." if entry else f"No memory with id {args.id}.")
 
 
@@ -154,8 +173,13 @@ def cmd_inspect(args) -> None:
 
 
 def cmd_supersede(args) -> None:
-    entry = _store(args).supersede(args.id, args.text, expected_revision=args.expected_revision,
-                                   agent=args.agent, source=_source(args))
+    entry = _store(args).supersede(
+        args.id,
+        args.text,
+        expected_revision=args.expected_revision,
+        agent=args.agent,
+        source=_source(args),
+    )
     print(f"Saved {entry.id} (revision {entry.revision}); superseded {args.id}.")
 
 
@@ -255,7 +279,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="rank purely by similarity, without fading time-sensitive memories",
     )
-    r.add_argument("--explain", action="store_true", help="show selection reasons (diagnostics are outside the context budget)")
+    r.add_argument(
+        "--explain",
+        action="store_true",
+        help="show selection reasons (diagnostics are outside the context budget)",
+    )
     r.set_defaults(func=cmd_recall)
 
     h = sub.add_parser("handoff", help="save a handoff for the next agent")
@@ -267,9 +295,7 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("boot", help="latest handoff + relevant memories")
     b.add_argument("task")
     b.add_argument("--budget", type=int, default=300, help="max context tokens")
-    b.add_argument(
-        "--min-score", type=float, default=AUTO_MIN_SCORE, dest="min_score"
-    )
+    b.add_argument("--min-score", type=float, default=AUTO_MIN_SCORE, dest="min_score")
     b.set_defaults(func=cmd_boot)
 
     ls = sub.add_parser("list", help="list memories with their ids")
@@ -293,11 +319,15 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("stats", help="show store stats")
     s.set_defaults(func=cmd_stats)
 
-    inspect = sub.add_parser("inspect", help="show a memory, its source and revision history")
+    inspect = sub.add_parser(
+        "inspect", help="show a memory, its source and revision history"
+    )
     inspect.add_argument("id")
     inspect.set_defaults(func=cmd_inspect)
 
-    replace = sub.add_parser("supersede", help="replace a decision while retaining its history")
+    replace = sub.add_parser(
+        "supersede", help="replace a decision while retaining its history"
+    )
     replace.add_argument("id")
     replace.add_argument("text")
     replace.add_argument("--expected-revision", type=int, required=True)
@@ -309,7 +339,9 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--json", action="store_true")
     check.set_defaults(func=cmd_doctor)
 
-    export = sub.add_parser("export", help="export an explicit snapshot to a different file")
+    export = sub.add_parser(
+        "export", help="export an explicit snapshot to a different file"
+    )
     export.add_argument("destination", type=Path)
     export.add_argument("--overwrite", action="store_true")
     export.set_defaults(func=cmd_export)
@@ -317,9 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
     hook = sub.add_parser(
         "hook", help="internal: run a Claude Code hook (reads JSON on stdin)"
     )
-    hook.add_argument(
-        "event", choices=["session-start", "session-end", "user-prompt"]
-    )
+    hook.add_argument("event", choices=["session-start", "session-end", "user-prompt"])
     hook.set_defaults(
         func=cmd_hook,
         _events={

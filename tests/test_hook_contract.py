@@ -1,6 +1,5 @@
 """Real Git state and client payload contracts, separate from handler internals."""
 
-import json
 from datetime import datetime, timedelta, timezone
 
 from agent_memory import hooks
@@ -10,8 +9,14 @@ from agent_memory.tokens import count_tokens
 
 def test_documented_field_takes_precedence_over_legacy_alias(repo):
     store_for(repo).write("Admin routes use requireAdmin.")
-    result = hooks.user_prompt(payload(repo, "UserPromptSubmit", prompt="how do admin routes use requireAdmin?",
-                                       user_input="how to bake sourdough bread?"))
+    result = hooks.user_prompt(
+        payload(
+            repo,
+            "UserPromptSubmit",
+            prompt="how do admin routes use requireAdmin?",
+            user_input="how to bake sourdough bread?",
+        )
+    )
     assert "requireAdmin" in result["additionalContext"]
 
 
@@ -49,7 +54,10 @@ def test_session_id_cannot_escape_the_marker_directory(repo):
 
 def test_startup_never_splits_an_atomic_multiline_memory(repo, monkeypatch):
     monkeypatch.setattr(hooks, "SESSION_START_BUDGET", 30)
-    store_for(repo).write("Warning: only deploy when all checks pass.\n" + "extra conditions " * 80, type="handoff")
+    store_for(repo).write(
+        "Warning: only deploy when all checks pass.\n" + "extra conditions " * 80,
+        type="handoff",
+    )
     store_for(repo).write("Bookings use UTC.", type="decision")
     result = hooks.session_start(payload(repo, "SessionStart"))["additionalContext"]
     assert "Warning:" not in result and "Bookings use UTC." in result

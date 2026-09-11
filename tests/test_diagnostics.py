@@ -21,11 +21,19 @@ def test_source_check_detects_changed_file(tmp_path):
     source.write_text("RETRIES = 3\n")
     git("add", "policy.py")
     git("commit", "-qm", "policy")
-    store = MemoryStore(tmp_path / ".agent_memory" / "store.json", embedder=HashingEmbedder())
-    entry = store.write("Retry at most three times.", source={"path": "policy.py", "commit": git("rev-parse", "HEAD")})
+    store = MemoryStore(
+        tmp_path / ".agent_memory" / "store.json", embedder=HashingEmbedder()
+    )
+    entry = store.write(
+        "Retry at most three times.",
+        source={"path": "policy.py", "commit": git("rev-parse", "HEAD")},
+    )
     assert "unchanged" in inspect_memory(store, entry.id)["source_check"]
     source.write_text("RETRIES = 5\n")
-    assert inspect_memory(store, entry.id)["source_check"] == "source changed; review this memory"
+    assert (
+        inspect_memory(store, entry.id)["source_check"]
+        == "source changed; review this memory"
+    )
 
 
 def test_cli_revision_conflict_and_doctor(tmp_path, capsys, monkeypatch):
@@ -78,10 +86,17 @@ with _file_lock(Path(sys.argv[1])):
 """
     import os
     from pathlib import Path
+
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(Path(__file__).resolve().parents[1] / "src")
+        + os.pathsep
+        + env.get("PYTHONPATH", "")
+    )
     path = tmp_path / "store.json"
-    subprocess.run([sys.executable, "-c", code, str(path)], env=env, check=True, timeout=20)
+    subprocess.run(
+        [sys.executable, "-c", code, str(path)], env=env, check=True, timeout=20
+    )
     with _file_lock(path, timeout=0.1):
         pass
 
@@ -110,7 +125,10 @@ def test_long_markdown_paragraphs_are_bounded_without_losing_content():
     import importlib.util
     from pathlib import Path
     from agent_memory import count_tokens
-    spec = importlib.util.spec_from_file_location("ingest", Path(__file__).resolve().parents[1] / "scripts" / "ingest_markdown.py")
+
+    spec = importlib.util.spec_from_file_location(
+        "ingest", Path(__file__).resolve().parents[1] / "scripts" / "ingest_markdown.py"
+    )
     ingest = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ingest)
     text = "Booking café საქართველო " * 100

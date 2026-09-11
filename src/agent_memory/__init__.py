@@ -24,7 +24,7 @@ from .store import (
 )
 from .tokens import count_tokens
 
-__version__ = "0.3.0"
+__version__ = "0.4.0rc1"
 
 __all__ = [
     "MemoryStore",

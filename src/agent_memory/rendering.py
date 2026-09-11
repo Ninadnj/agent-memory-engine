@@ -13,7 +13,11 @@ def tag(entry) -> str:
 
 
 def reference(entry) -> str:
-    parts = [entry.id, f"r{entry.revision}", (entry.updated_at or entry.created_at)[:10]]
+    parts = [
+        entry.id,
+        f"r{entry.revision}",
+        (entry.updated_at or entry.created_at)[:10],
+    ]
     if entry.source.get("path"):
         parts.append(str(entry.source["path"]))
     if entry.source.get("commit"):
@@ -39,20 +43,36 @@ def pack_blocks(blocks, budget, *, limit=None) -> str:
     return "\n".join(parts)
 
 
-def recall_context(store: MemoryStore, query: str, *, k=5, budget=300, min_score=0.0,
-                   decay=True, identity=True) -> str:
+def recall_context(
+    store: MemoryStore,
+    query: str,
+    *,
+    k=5,
+    budget=300,
+    min_score=0.0,
+    decay=True,
+    identity=True,
+) -> str:
     _validate_limits(k, budget, min_score)
     if k == 0:
         return ""
-    hits = store.recall(query, k=max(1, len(store.all())), min_score=min_score, decay=decay)
-    return pack_blocks((render_entry(hit.entry, identity=identity) for hit in hits), budget, limit=k)
+    hits = store.recall(
+        query, k=max(1, len(store.all())), min_score=min_score, decay=decay
+    )
+    return pack_blocks(
+        (render_entry(hit.entry, identity=identity) for hit in hits), budget, limit=k
+    )
 
 
 def boot_context(store: MemoryStore, task: str, *, budget=300, min_score=0.0) -> str:
-    handoff, hits = store.boot(task, k=max(1, len(store.all())), budget_tokens=None, min_score=min_score)
+    handoff, hits = store.boot(
+        task, k=max(1, len(store.all())), budget_tokens=None, min_score=min_score
+    )
     blocks = []
     if handoff:
-        blocks.append(f"Last handoff [{tag(handoff)}]: {handoff.text} ({reference(handoff)})")
+        blocks.append(
+            f"Last handoff [{tag(handoff)}]: {handoff.text} ({reference(handoff)})"
+        )
     blocks.extend(render_entry(hit.entry) for hit in hits)
     return pack_blocks(blocks, budget, limit=5 + bool(handoff))
 

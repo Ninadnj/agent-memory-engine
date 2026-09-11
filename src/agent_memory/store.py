@@ -23,11 +23,17 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 
 import numpy as np
 
-from .embeddings import Embedder, HashingEmbedder, SentenceTransformerEmbedder, default_embedder, embedding_config
+from .embeddings import (
+    Embedder,
+    HashingEmbedder,
+    SentenceTransformerEmbedder,
+    default_embedder,
+    embedding_config,
+)
 from ._locking import _file_lock
 from .tokens import count_tokens
 
@@ -65,24 +71,31 @@ def _validate_text(text: str) -> None:
         raise ValueError(f"memory text must contain 1..{MAX_TEXT_CHARS} characters")
 
 
-def _validate_mapping(value: dict, name: str) -> None:
+def _validate_mapping(value: dict, name: str, *, limit: bool = True) -> None:
     if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
         raise ValueError(f"{name} must be an object with string keys")
     try:
         encoded = json.dumps(value, allow_nan=False).encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must contain finite JSON values") from exc
-    if len(encoded) > MAX_METADATA_BYTES:
+    if limit and len(encoded) > MAX_METADATA_BYTES:
         raise ValueError(f"{name} exceeds {MAX_METADATA_BYTES} bytes")
 
 
 def _validate_limits(k: int, budget: Optional[int], min_score: float) -> None:
     if isinstance(k, bool) or not isinstance(k, int) or k < 0:
         raise ValueError("k must be a nonnegative integer")
-    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < 0):
+    if budget is not None and (
+        isinstance(budget, bool) or not isinstance(budget, int) or budget < 0
+    ):
         raise ValueError("budget_tokens must be a nonnegative integer or None")
-    if not isinstance(min_score, (int, float)) or not np.isfinite(min_score) or not -1 <= min_score <= 1:
+    if (
+        not isinstance(min_score, (int, float))
+        or not np.isfinite(min_score)
+        or not -1 <= min_score <= 1
+    ):
         raise ValueError("min_score must be finite and between -1 and 1")
+
 
 # How fast a memory's relevance fades, in days, per type. A memory's similarity
 # score is multiplied by 0.5 ** (age / half_life), so an entry at its half-life
@@ -200,17 +213,25 @@ def _entry_from_raw(raw: dict, *, history: bool = True) -> MemoryEntry:
         raise ValueError("each memory must be an object")
     known = MemoryEntry.__dataclass_fields__
     entry = MemoryEntry(**{key: value for key, value in raw.items() if key in known})
-    _validate_text(entry.text)
+    # New writes are bounded at the API boundary. Existing records may predate
+    # those limits (including empty text); retain them so they can be corrected
+    # or deleted without an unrelated migration changing their identity/data.
+    if not isinstance(entry.text, str):
+        raise ValueError("stored memory text must be a string")
     if entry.type not in MEMORY_TYPES:
         raise ValueError(f"unknown memory type {entry.type!r}")
-    if not isinstance(entry.id, str) or len(entry.id) > 512:
+    if not isinstance(entry.id, str):
         raise ValueError("invalid memory id")
     for name in ("created_at", "agent", "updated_by"):
         if not isinstance(getattr(entry, name), str):
             raise ValueError(f"{name} must be a string")
     if entry.updated_at is not None and not isinstance(entry.updated_at, str):
         raise ValueError("updated_at must be a string or null")
-    if isinstance(entry.revision, bool) or not isinstance(entry.revision, int) or entry.revision < 1:
+    if (
+        isinstance(entry.revision, bool)
+        or not isinstance(entry.revision, int)
+        or entry.revision < 1
+    ):
         raise ValueError("revision must be a positive integer")
     if entry.status not in ("active", "superseded"):
         raise ValueError("invalid memory status")
@@ -218,8 +239,8 @@ def _entry_from_raw(raw: dict, *, history: bool = True) -> MemoryEntry:
         raise ValueError("superseded_by must be an id or null")
     if entry.status == "superseded" and entry.superseded_by is None:
         raise ValueError("superseded memory must name its replacement")
-    _validate_mapping(entry.metadata, "metadata")
-    _validate_mapping(entry.source, "source")
+    _validate_mapping(entry.metadata, "metadata", limit=False)
+    _validate_mapping(entry.source, "source", limit=False)
     if not isinstance(entry.history, list) or len(entry.history) > MAX_HISTORY:
         raise ValueError(f"history must contain at most {MAX_HISTORY} revisions")
     if history:
@@ -277,7 +298,9 @@ def _encode_vector(vec: np.ndarray) -> str:
 
 def _decode_vector(raw: str | list[float]) -> np.ndarray:
     if isinstance(raw, str):
-        vec = np.frombuffer(base64.b64decode(raw, validate=True), dtype=np.float16).astype(np.float32)
+        vec = np.frombuffer(
+            base64.b64decode(raw, validate=True), dtype=np.float16
+        ).astype(np.float32)
     else:  # v1 stores kept a plain JSON list of floats
         vec = np.asarray(raw, dtype=np.float32)
     norm = float(np.linalg.norm(vec))
@@ -297,7 +320,9 @@ class MemoryStore:
         self, path: Optional[str | Path] = None, embedder: Optional[Embedder] = None
     ) -> None:
         self.path = Path(path).expanduser() if path else None
-        self.embedder = embedder if embedder is not None else self._configured_embedder()
+        self.embedder = (
+            embedder if embedder is not None else self._configured_embedder()
+        )
         self._entries: list[MemoryEntry] = []
         self._matrix = np.zeros((0, self.embedder.dim), dtype=np.float32)
         self._stamp: Optional[tuple[int, int, int]] = None
@@ -306,7 +331,11 @@ class MemoryStore:
 
     def _configured_embedder(self) -> Embedder:
         """An existing store pins its backend unless the caller overrides it."""
-        if self.path and self.path.exists() and os.environ.get("AGENT_MEMORY_EMBEDDER", "auto") == "auto":
+        if (
+            self.path
+            and self.path.exists()
+            and os.environ.get("AGENT_MEMORY_EMBEDDER", "auto") == "auto"
+        ):
             try:
                 if self.path.stat().st_size > MAX_STORE_BYTES:
                     raise ValueError("store exceeds the supported local file size")
@@ -315,9 +344,13 @@ class MemoryStore:
                 if config.get("backend") == "hashing":
                     return HashingEmbedder(dim=config["dim"])
                 if config.get("backend") == "sentence-transformers":
-                    return SentenceTransformerEmbedder(config["model"], revision=config.get("revision"))
+                    return SentenceTransformerEmbedder(
+                        config["model"], revision=config.get("revision")
+                    )
             except (ValueError, KeyError, AttributeError, TypeError) as exc:
-                raise StoreFormatError(f"cannot read embedding configuration in {self.path}: {exc}") from exc
+                raise StoreFormatError(
+                    f"cannot read embedding configuration in {self.path}: {exc}"
+                ) from exc
         return default_embedder()
 
     # ---- writing -------------------------------------------------------
@@ -326,7 +359,11 @@ class MemoryStore:
         """Reload under the lock and roll back local state if persistence fails."""
         with _file_lock(self.path) if self.path else nullcontext():
             self._reload_if_changed()
-            entries, matrix, stamp = deepcopy(self._entries), self._matrix.copy(), self._stamp
+            entries, matrix, stamp = (
+                deepcopy(self._entries),
+                self._matrix.copy(),
+                self._stamp,
+            )
             try:
                 yield
             except BaseException:
@@ -335,14 +372,23 @@ class MemoryStore:
 
     def _embed(self, texts: list[str]) -> np.ndarray:
         vectors = np.asarray(self.embedder.embed(texts), dtype=np.float32)
-        if vectors.shape != (len(texts), self.embedder.dim) or not np.isfinite(vectors).all():
+        if (
+            vectors.shape != (len(texts), self.embedder.dim)
+            or not np.isfinite(vectors).all()
+        ):
             raise ValueError("embedder returned invalid vectors")
         return vectors
 
     def write(
-        self, text: str, type: str = "fact", metadata: Optional[dict] = None,
-        id: Optional[str] = None, dedup_threshold: float = 0.97, agent: str = "",
-        *, source: Optional[dict] = None,
+        self,
+        text: str,
+        type: str = "fact",
+        metadata: Optional[dict] = None,
+        id: Optional[str] = None,
+        dedup_threshold: float = 0.97,
+        agent: str = "",
+        *,
+        source: Optional[dict] = None,
     ) -> MemoryEntry:
         """Save a memory, or return its exact duplicate of the same type/source.
 
@@ -350,13 +396,20 @@ class MemoryStore:
         Semantic similarity never establishes identity. ``dedup_threshold`` is
         retained for compatibility: values above 1 disable exact deduplication.
         """
-        return self.write_with_status(text, type, metadata, id, dedup_threshold, agent,
-                                      source=source)[0]
+        return self.write_with_status(
+            text, type, metadata, id, dedup_threshold, agent, source=source
+        )[0]
 
     def write_with_status(
-        self, text: str, type: str = "fact", metadata: Optional[dict] = None,
-        id: Optional[str] = None, dedup_threshold: float = 0.97, agent: str = "",
-        *, source: Optional[dict] = None,
+        self,
+        text: str,
+        type: str = "fact",
+        metadata: Optional[dict] = None,
+        id: Optional[str] = None,
+        dedup_threshold: float = 0.97,
+        agent: str = "",
+        *,
+        source: Optional[dict] = None,
     ) -> tuple[MemoryEntry, bool]:
         """Like write; stored=False means an exact duplicate was found."""
         _validate_text(text)
@@ -364,14 +417,18 @@ class MemoryStore:
             raise ValueError(f"unknown memory type {type!r}; use one of {MEMORY_TYPES}")
         _validate_mapping(metadata if metadata is not None else {}, "metadata")
         _validate_mapping(source if source is not None else {}, "source")
-        if id is not None and (not isinstance(id, str) or len(id) > 512):
-            raise ValueError("id must be a string of at most 512 characters")
+        if id is not None and not isinstance(id, str):
+            raise ValueError("id must be a string")
         if not isinstance(agent, str) or len(agent) > 200:
             raise ValueError("agent must be a string of at most 200 characters")
-        if not isinstance(dedup_threshold, (int, float)) or not np.isfinite(dedup_threshold):
+        if not isinstance(dedup_threshold, (int, float)) or not np.isfinite(
+            dedup_threshold
+        ):
             raise ValueError("dedup_threshold must be finite")
         with self._transaction():
-            entry, stored = self._append(text, type, metadata, id, dedup_threshold, agent, source)
+            entry, stored = self._append(
+                text, type, metadata, id, dedup_threshold, agent, source
+            )
             if stored and self.path:
                 self._save_unlocked()
             return entry, stored
@@ -384,13 +441,22 @@ class MemoryStore:
         normalized = " ".join(text.split())
         if id is None and dedup_threshold <= 1:
             for entry in self._entries:
-                if (entry.status == "active" and entry.type == type
-                        and entry.source == (source or {})
-                        and " ".join(entry.text.split()) == normalized):
+                if (
+                    entry.status == "active"
+                    and entry.type == type
+                    and entry.source == (source or {})
+                    and " ".join(entry.text.split()) == normalized
+                ):
                     return entry, False
         vec = self._embed([text])[0]
-        entry = MemoryEntry(id=id if id is not None else self._next_id(), type=type, text=text,
-                            metadata=deepcopy(metadata or {}), agent=agent, source=deepcopy(source or {}))
+        entry = MemoryEntry(
+            id=id if id is not None else self._next_id(),
+            type=type,
+            text=text,
+            metadata=deepcopy(metadata or {}),
+            agent=agent,
+            source=deepcopy(source or {}),
+        )
         self._entries.append(entry)
         self._matrix = np.vstack([self._matrix, vec[None, :]])
         return entry, True
@@ -406,7 +472,11 @@ class MemoryStore:
     @staticmethod
     def _check_revision(entry: MemoryEntry, expected: Optional[int]) -> None:
         if expected is not None:
-            if isinstance(expected, bool) or not isinstance(expected, int) or expected < 1:
+            if (
+                isinstance(expected, bool)
+                or not isinstance(expected, int)
+                or expected < 1
+            ):
                 raise ValueError("expected_revision must be a positive integer")
             if entry.revision != expected:
                 raise MemoryConflictError(
@@ -427,8 +497,13 @@ class MemoryStore:
             return False
 
     def update(
-        self, entry_id: str, text: Optional[str] = None, type: Optional[str] = None,
-        *, expected_revision: Optional[int] = None, agent: str = "",
+        self,
+        entry_id: str,
+        text: Optional[str] = None,
+        type: Optional[str] = None,
+        *,
+        expected_revision: Optional[int] = None,
+        agent: str = "",
         source: Optional[dict] = None,
     ) -> Optional[MemoryEntry]:
         """Revise an active memory, retaining creation time and revision history.
@@ -450,15 +525,29 @@ class MemoryStore:
                     continue
                 self._check_revision(entry, expected_revision)
                 if entry.status != "active":
-                    raise MemoryConflictError(f"memory {entry_id} is superseded by {entry.superseded_by}")
+                    raise MemoryConflictError(
+                        f"memory {entry_id} is superseded by {entry.superseded_by}"
+                    )
                 new_text = entry.text if text is None else text
                 new_type = entry.type if type is None else type
                 new_source = entry.source if source is None else source
-                if (new_text, new_type, new_source) == (entry.text, entry.type, entry.source):
+                if (new_text, new_type, new_source) == (
+                    entry.text,
+                    entry.type,
+                    entry.source,
+                ):
                     return entry
-                vec = self._embed([new_text])[0] if new_text != entry.text else self._matrix[i]
+                vec = (
+                    self._embed([new_text])[0]
+                    if new_text != entry.text
+                    else self._matrix[i]
+                )
                 self._record_revision(entry, agent)
-                entry.text, entry.type, entry.source = new_text, new_type, deepcopy(new_source)
+                entry.text, entry.type, entry.source = (
+                    new_text,
+                    new_type,
+                    deepcopy(new_source),
+                )
                 self._matrix[i] = vec
                 if self.path:
                     self._save_unlocked()
@@ -475,8 +564,13 @@ class MemoryStore:
         entry.updated_by = agent
 
     def supersede(
-        self, entry_id: str, text: str, *, expected_revision: int,
-        agent: str = "", source: Optional[dict] = None,
+        self,
+        entry_id: str,
+        text: str,
+        *,
+        expected_revision: int,
+        agent: str = "",
+        source: Optional[dict] = None,
     ) -> MemoryEntry:
         """Atomically replace an active decision with a new identity.
 
@@ -484,6 +578,8 @@ class MemoryStore:
         """
         _validate_text(text)
         _validate_mapping(source if source is not None else {}, "source")
+        if expected_revision is None:
+            raise ValueError("expected_revision must be a positive integer")
         if not isinstance(agent, str) or len(agent) > 200:
             raise ValueError("agent must be a string of at most 200 characters")
         with self._transaction():
@@ -493,7 +589,9 @@ class MemoryStore:
             self._check_revision(old, expected_revision)
             if old.status != "active":
                 raise MemoryConflictError(f"memory {entry_id} is already superseded")
-            replacement, _ = self._append(text, old.type, old.metadata, None, 2, agent, source)
+            replacement, _ = self._append(
+                text, old.type, old.metadata, None, 2, agent, source
+            )
             self._record_revision(old, agent)
             old.status, old.superseded_by = "superseded", replacement.id
             if self.path:
@@ -534,7 +632,9 @@ class MemoryStore:
         """
         _validate_limits(k, budget_tokens, min_score)
         if not isinstance(query, str) or len(query) > MAX_TEXT_CHARS:
-            raise ValueError(f"query must be a string of at most {MAX_TEXT_CHARS} characters")
+            raise ValueError(
+                f"query must be a string of at most {MAX_TEXT_CHARS} characters"
+            )
         if type_filter is not None and type_filter not in MEMORY_TYPES:
             raise ValueError(f"unknown memory type {type_filter!r}")
         self._reload_if_changed()
@@ -591,8 +691,11 @@ class MemoryStore:
         remaining = budget_tokens
         latest_handoff = self.latest("handoff", fresh=True)
         included_handoff: Optional[MemoryEntry] = None
-        excluded_ids = {entry.id for entry in self.all()
-                        if entry.type in ("handoff", "worklog") and not startup_fresh(entry)}
+        excluded_ids = {
+            entry.id
+            for entry in self.all()
+            if entry.type in ("handoff", "worklog") and not startup_fresh(entry)
+        }
 
         if latest_handoff is not None:
             excluded_ids.add(latest_handoff.id)
@@ -615,7 +718,11 @@ class MemoryStore:
         """Most recently written entry of a type (e.g. the last handoff)."""
         self._reload_if_changed()
         for entry in reversed(self._entries):
-            if entry.type == type and entry.status == "active" and (not fresh or startup_fresh(entry)):
+            if (
+                entry.type == type
+                and entry.status == "active"
+                and (not fresh or startup_fresh(entry))
+            ):
                 return entry
         return None
 
@@ -649,7 +756,9 @@ class MemoryStore:
             return
         with _file_lock(target):
             if self._read_stamp() != self._stamp:
-                raise MemoryConflictError("store changed since this snapshot; reload before saving")
+                raise MemoryConflictError(
+                    "store changed since this snapshot; reload before saving"
+                )
             self._save_unlocked(target)
 
     def export(self, path: str | Path, *, overwrite: bool = False) -> None:
@@ -674,16 +783,26 @@ class MemoryStore:
             _entry_from_raw(raw)
             raw["embedding"] = _encode_vector(self._matrix[i])
             records.append(raw)
-        payload = {"format": STORE_FORMAT, "embedder": type(self.embedder).__name__,
-                   "embedding_config": embedding_config(self.embedder),
-                   "dim": self.embedder.dim, "entries": records}
+        payload = {
+            "format": STORE_FORMAT,
+            "embedder": type(self.embedder).__name__,
+            "embedding_config": embedding_config(self.embedder),
+            "dim": self.embedder.dim,
+            "entries": records,
+        }
         content = json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False)
         if len(content.encode("utf-8")) > MAX_STORE_BYTES:
             raise ValueError("store exceeds the supported local file size")
         temporary = None
         try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
-                                             prefix=target.name + ".", suffix=".tmp", delete=False) as stream:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=target.name + ".",
+                suffix=".tmp",
+                delete=False,
+            ) as stream:
                 temporary = Path(stream.name)
                 stream.write(content)
                 stream.flush()
@@ -707,14 +826,22 @@ class MemoryStore:
             if target.stat().st_size > MAX_STORE_BYTES:
                 raise ValueError("store exceeds the supported local file size")
             payload = json.loads(target.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("entries"), list
+            ):
                 raise ValueError("store must contain an entries array")
             version = payload.get("format", 1)
-            if isinstance(version, bool) or not isinstance(version, int) or not 1 <= version <= STORE_FORMAT:
+            if (
+                isinstance(version, bool)
+                or not isinstance(version, int)
+                or not 1 <= version <= STORE_FORMAT
+            ):
                 raise ValueError(f"unsupported store format {version!r}")
-            reembed = (payload.get("dim") != self.embedder.dim
-                       or payload.get("embedder") != type(self.embedder).__name__
-                       or payload.get("embedding_config") != embedding_config(self.embedder))
+            reembed = (
+                payload.get("dim") != self.embedder.dim
+                or payload.get("embedder") != type(self.embedder).__name__
+                or payload.get("embedding_config") != embedding_config(self.embedder)
+            )
             entries, vectors, seen = [], [], set()
             for raw in payload["entries"]:
                 entry = _entry_from_raw(raw)
@@ -726,8 +853,11 @@ class MemoryStore:
                 # Validate stored vectors even when changing models. Invalid
                 # files must not be silently repaired and overwritten.
                 vector = None if embedding is None else _decode_vector(embedding)
-                if vector is not None and (vector.ndim != 1 or not np.isfinite(vector).all()
-                                           or len(vector) != payload.get("dim")):
+                if vector is not None and (
+                    vector.ndim != 1
+                    or not np.isfinite(vector).all()
+                    or len(vector) != payload.get("dim")
+                ):
                     raise ValueError(f"invalid embedding for {entry.id}")
                 vectors.append(None if reembed else vector)
             missing = [i for i, vector in enumerate(vectors) if vector is None]
@@ -735,10 +865,15 @@ class MemoryStore:
                 fresh = self._embed([entries[i].text for i in missing])
                 for slot, i in enumerate(missing):
                     vectors[i] = fresh[slot]
-            matrix = (np.array(vectors, dtype=np.float32) if vectors else
-                      np.zeros((0, self.embedder.dim), dtype=np.float32))
+            matrix = (
+                np.array(vectors, dtype=np.float32)
+                if vectors
+                else np.zeros((0, self.embedder.dim), dtype=np.float32)
+            )
         except (ValueError, TypeError, KeyError, UnicodeError) as exc:
-            raise StoreFormatError(f"cannot load {target}: {exc}; original file left untouched") from exc
+            raise StoreFormatError(
+                f"cannot load {target}: {exc}; original file left untouched"
+            ) from exc
         self._entries, self._matrix = entries, matrix
         if target == self.path:
             self._stamp = stamp

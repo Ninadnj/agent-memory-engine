@@ -41,14 +41,24 @@ def source_check(store: MemoryStore, source: dict) -> str:
         return "file exists; no verifiable source commit supplied"
     relative = target.relative_to(root).as_posix()
     try:
-        exists = subprocess.run(["git", "cat-file", "-e", f"{commit}:{relative}"],
-                                cwd=root, capture_output=True, timeout=5)
+        exists = subprocess.run(
+            ["git", "cat-file", "-e", f"{commit}:{relative}"],
+            cwd=root,
+            capture_output=True,
+            timeout=5,
+        )
         if exists.returncode:
             return "source commit or path cannot be verified"
-        diff = subprocess.run(["git", "diff", "--quiet", commit, "--", relative],
-                              cwd=root, capture_output=True, timeout=5)
+        diff = subprocess.run(
+            ["git", "diff", "--quiet", commit, "--", relative],
+            cwd=root,
+            capture_output=True,
+            timeout=5,
+        )
         if diff.returncode == 0:
-            return "file unchanged since source commit; claim still requires verification"
+            return (
+                "file unchanged since source commit; claim still requires verification"
+            )
         if diff.returncode == 1:
             return "source changed; review this memory"
         return "source check failed"
@@ -57,15 +67,21 @@ def source_check(store: MemoryStore, source: dict) -> str:
 
 
 def doctor(path: Path) -> dict:
-    report = {"store": str(path.resolve()), "exists": path.exists(), "ok": False,
-              "tokenizer": "cl100k_base" if using_exact_tokenizer() else "approximate",
-              "locking": "OS advisory lock (local filesystems only)"}
+    report = {
+        "store": str(path.resolve()),
+        "exists": path.exists(),
+        "ok": False,
+        "tokenizer": "cl100k_base" if using_exact_tokenizer() else "approximate",
+        "locking": "OS advisory lock (local filesystems only)",
+    }
     try:
         store = MemoryStore(path)
         report.update(store.stats())
         report["embedding_config"] = embedding_config(store.embedder)
         report["expired_startup_notes"] = sum(
-            entry.type in ("handoff", "worklog") and not startup_fresh(entry) for entry in store.all())
+            entry.type in ("handoff", "worklog") and not startup_fresh(entry)
+            for entry in store.all()
+        )
         directory = path.parent
         while not directory.exists() and directory != directory.parent:
             directory = directory.parent
@@ -76,7 +92,9 @@ def doctor(path: Path) -> dict:
     return report
 
 
-def explain_recall(store: MemoryStore, query: str, *, k=5, budget=300, min_score=0.0, decay=True) -> dict:
+def explain_recall(
+    store: MemoryStore, query: str, *, k=5, budget=300, min_score=0.0, decay=True
+) -> dict:
     _validate_limits(k, budget, min_score)
     hits = store.recall(query, k=max(1, len(store.all())), min_score=-1, decay=decay)
     rows, parts = [], []
@@ -92,10 +110,23 @@ def explain_recall(store: MemoryStore, query: str, *, k=5, budget=300, min_score
         else:
             reason = "selected"
             parts.append(block)
-        rows.append({"id": hit.entry.id, "revision": hit.entry.revision,
-                     "score": round(hit.score, 6), "reason": reason})
-    rows.extend({"id": entry.id, "revision": entry.revision, "reason": "superseded"}
-                for entry in store.all() if entry.status != "active")
-    return {"query": query, "rendered_tokens": count_tokens("\n".join(parts)),
-            "budget": budget, "tokenizer": "cl100k_base" if using_exact_tokenizer() else "approximate",
-            "candidates": rows}
+        rows.append(
+            {
+                "id": hit.entry.id,
+                "revision": hit.entry.revision,
+                "score": round(hit.score, 6),
+                "reason": reason,
+            }
+        )
+    rows.extend(
+        {"id": entry.id, "revision": entry.revision, "reason": "superseded"}
+        for entry in store.all()
+        if entry.status != "active"
+    )
+    return {
+        "query": query,
+        "rendered_tokens": count_tokens("\n".join(parts)),
+        "budget": budget,
+        "tokenizer": "cl100k_base" if using_exact_tokenizer() else "approximate",
+        "candidates": rows,
+    }

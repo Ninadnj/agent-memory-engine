@@ -51,7 +51,9 @@ def _file_lock(target: Path, timeout: float = 10.0, stale_after: float = 60.0):
                 if exc.errno not in (errno.EACCES, errno.EAGAIN):
                     raise
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(f"could not lock {target} after {timeout}s") from exc
+                    raise TimeoutError(
+                        f"could not lock {target} after {timeout}s"
+                    ) from exc
                 time.sleep(min(0.02, max(0, deadline - time.monotonic())))
         try:
             yield

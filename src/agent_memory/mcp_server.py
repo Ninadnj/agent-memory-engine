@@ -137,17 +137,23 @@ def build_server(
                     # MCP 2 masks unexpected exceptions. Validation/conflicts
                     # are expected tool errors that the agent can act on.
                     raise ToolError(str(exc)) from exc
+
             return server.tool()(checked)
+
         return register
 
     @memory_tool()
-    def memory_write(text: str, type: str = "fact", source: Optional[dict] = None) -> str:
+    def memory_write(
+        text: str, type: str = "fact", source: Optional[dict] = None
+    ) -> str:
         """Save one durable memory. `type` is one of: project, decision, issue,
         state, handoff, worklog, fact. Only exact duplicates are skipped.
         Optional source may include path, commit, event and verified_at."""
         if type not in MEMORY_TYPES:
             return f"Error: type must be one of {sorted(MEMORY_TYPES)}."
-        entry, stored = store.write_with_status(text, type=type, agent=agent, source=source)
+        entry, stored = store.write_with_status(
+            text, type=type, agent=agent, source=source
+        )
         if not stored:
             return (
                 f"Not saved — exact duplicate of {entry.id}: {entry.text!r} "
@@ -162,7 +168,9 @@ def build_server(
         Zero returns no content. Accounting uses cl100k_base if available,
         otherwise the documented approximation; protocol wrappers are excluded.
         """
-        result = recall_context(store, query, k=k, budget=budget_tokens, min_score=min_score)
+        result = recall_context(
+            store, query, k=k, budget=budget_tokens, min_score=min_score
+        )
         return result or empty_message("No relevant memories.", budget_tokens)
 
     @memory_tool()
@@ -187,15 +195,27 @@ def build_server(
     def memory_get(id: str) -> str:
         """Inspect source, current revision and recent history before editing."""
         result = inspect_memory(store, id)
-        return json.dumps(result, ensure_ascii=False) if result else f"No memory with id {id}."
+        return (
+            json.dumps(result, ensure_ascii=False)
+            if result
+            else f"No memory with id {id}."
+        )
 
     @memory_tool()
-    def memory_update(id: str, text: str, expected_revision: int, source: Optional[dict] = None) -> str:
+    def memory_update(
+        id: str, text: str, expected_revision: int, source: Optional[dict] = None
+    ) -> str:
         """Correct a memory using the revision from memory_get/list/recall.
 
         A conflicting revision fails; reread it before deciding what to change.
         """
-        entry = store.update(id, text=text, expected_revision=expected_revision, agent=agent, source=source)
+        entry = store.update(
+            id,
+            text=text,
+            expected_revision=expected_revision,
+            agent=agent,
+            source=source,
+        )
         if entry is None:
             return f"No memory with id {id}."
         return f"Updated {entry.id} (revision {entry.revision})."
@@ -203,16 +223,23 @@ def build_server(
     @memory_tool()
     def memory_forget(id: str, expected_revision: int) -> str:
         """Delete an entry only if its revision still matches the one inspected."""
-        return (f"Forgot {id}." if store.forget(id, expected_revision=expected_revision)
-                else f"No memory with id {id}.")
+        return (
+            f"Forgot {id}."
+            if store.forget(id, expected_revision=expected_revision)
+            else f"No memory with id {id}."
+        )
 
     @memory_tool()
-    def memory_supersede(id: str, text: str, expected_revision: int, source: Optional[dict] = None) -> str:
+    def memory_supersede(
+        id: str, text: str, expected_revision: int, source: Optional[dict] = None
+    ) -> str:
         """Replace an outdated decision, retaining its audit trail and link.
 
         The old entry is inspectable but excluded from normal recall/startup.
         """
-        entry = store.supersede(id, text, expected_revision=expected_revision, agent=agent, source=source)
+        entry = store.supersede(
+            id, text, expected_revision=expected_revision, agent=agent, source=source
+        )
         return f"Saved {entry.id} (revision {entry.revision}); superseded {id}."
 
     @memory_tool()
@@ -227,7 +254,9 @@ def build_server(
         if not entries:
             return "No memories stored."
         shown = entries[:limit]
-        lines = [f"- {e.id} [{_tag(e)}; r{e.revision}; {e.status}] {e.text}" for e in shown]
+        lines = [
+            f"- {e.id} [{_tag(e)}; r{e.revision}; {e.status}] {e.text}" for e in shown
+        ]
         if len(entries) > len(shown):
             lines.append(f"... and {len(entries) - len(shown)} more.")
         return "\n".join(lines)
