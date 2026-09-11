@@ -34,7 +34,7 @@ from .embeddings import (
     default_embedder,
     embedding_config,
 )
-from ._locking import _file_lock
+from ._locking import _file_lock, _replace_file
 from .tokens import count_tokens
 
 # Memory categories mirror the original Markdown scaffold (PROJECT, DECISIONS,
@@ -807,7 +807,7 @@ class MemoryStore:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, target)
+            _replace_file(temporary, target)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)

@@ -26,7 +26,7 @@ AGENT_MEMORY_EMBEDDER=hashing python -m pytest -q -ra tests/test_store.py tests/
 # 136 passed, 0 failed, 0 skipped
 
 AGENT_MEMORY_EMBEDDER=hashing python -m pytest -q -ra
-# 259 passed, 0 failed, 1 skipped
+# 265 passed, 0 failed, 1 skipped
 
 # In the separate MCP 1.30.0 environment:
 AGENT_MEMORY_EMBEDDER=hashing python -m pytest -q -ra tests/test_mcp_server.py tests/test_task_runner.py
@@ -58,6 +58,21 @@ git diff --check
 ```
 
 The skipped module is `tests/test_sentence_transformers.py`: optional sentence-transformers/model weights were not installed in the local test environment. No existing behavioral assertion was loosened. Legacy schema expectations were extended to include revision fields; rendered-budget assertions were strengthened to include all returned text.
+
+## Windows findings from CI
+
+The first Windows job ran the full suite and reported **254 passed, 5 failed, 1 skipped**. It exposed `.EXE`/quoted-path recognition in hook management, a transient file-sharing failure during atomic replacement, and the test fixture's POSIX-only home-directory setup. The production fixes preserve unrelated hook commands and retry only Windows replacement errors 5/32 for at most one second. The tilde test now sets Windows' `USERPROFILE` as well as POSIX `HOME`, preserving its original assertion.
+
+Five additional portable regressions failed before these fixes. A sixth test verifies that persistent replacement failures stop on a deadline and leave the original file intact.
+
+```bash
+AGENT_MEMORY_EMBEDDER=hashing python -m pytest -q --tb=short tests/test_windows_contract.py
+# Before the fix: 0 passed, 5 failed, 0 skipped
+AGENT_MEMORY_EMBEDDER=hashing python -m pytest -q -ra tests/test_windows_contract.py tests/test_hooks.py tests/test_persistence.py
+# After the fix: 79 passed, 0 failed, 0 skipped
+```
+
+Linux Python 3.10/3.12, both MCP SDK jobs and package installation passed in GitHub Actions on the first candidate. The current platform results are linked from [pull request #6](https://github.com/Ninadnj/agent-memory-engine/pull/6), including the Windows rerun after these corrections.
 
 ## Scope of evidence
 

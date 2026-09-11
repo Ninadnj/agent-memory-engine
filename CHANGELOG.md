@@ -11,6 +11,7 @@
 - Add inspect, doctor, recall explanations, explicit snapshot export and bounded Markdown import chunks.
 - Add a two-process MCP handoff demo, 30 executable coding fixtures, and a provider-neutral evaluation adapter contract with honest missing-telemetry reporting.
 - Rewrite onboarding, document compatibility/trust boundaries, and add package/OS/SDK checks.
+- Handle quoted/Windows hook executables without duplicating hooks or deleting unrelated commands; retry transient Windows file-sharing conflicts during atomic replacement.
 
 **Compatibility:** format 3 writes, required MCP/CLI `expected_revision`, changed deduplication and rendered-budget behavior. Upgrade all shared writers together. See [migration](docs/migration-v0.4.md).
 

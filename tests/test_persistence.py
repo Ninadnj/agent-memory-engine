@@ -321,6 +321,8 @@ def test_update_rejects_unknown_type(tmp_path):
 
 def test_paths_with_a_tilde_are_expanded(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    # pathlib follows Windows' USERPROFILE instead of POSIX HOME.
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     store = MemoryStore(path="~/nested/store.json", embedder=HashingEmbedder())
     store.write("Bookings are stored in UTC.", type="decision")
     assert (tmp_path / "nested" / "store.json").exists()

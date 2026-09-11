@@ -356,7 +356,19 @@ def _is_ours(hook: dict) -> bool:
     """Match our hooks whether they were written bare or as an absolute path."""
     if not isinstance(hook, dict):
         return False
-    return HOOK_COMMAND in str(hook.get("command", ""))
+    try:
+        # Normalize Windows separators before shell tokenization so quoted
+        # paths and .EXE are recognized on either platform. Match the actual
+        # executable, not an unrelated command merely mentioning our name.
+        tokens = shlex.split(str(hook.get("command", "")).replace("\\", "/"))
+    except ValueError:
+        return False
+    return (
+        len(tokens) >= 2
+        and tokens[1] == "hook"
+        and tokens[0].rsplit("/", 1)[-1].casefold()
+        in ("agent-memory", "agent-memory.exe")
+    )
 
 
 def install(settings_path: Path, events: list[str]) -> list[str]:

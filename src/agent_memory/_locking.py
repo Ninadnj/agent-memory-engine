@@ -6,6 +6,27 @@ from pathlib import Path
 import time
 
 
+def _replace_file(source: Path, target: Path, timeout: float = 1.0) -> None:
+    """Allow a Windows reader to close before retrying an atomic replace.
+
+    Writers still hold the store lock throughout. Windows denies replacement
+    while a reader has the destination open; retries never unlink the old file
+    and stop on a deadline. Other permission failures propagate immediately.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError as exc:
+            if (
+                getattr(exc, "winerror", None) not in (5, 32)
+                or time.monotonic() >= deadline
+            ):
+                raise
+            time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+
+
 @contextmanager
 def _file_lock(target: Path, timeout: float = 10.0, stale_after: float = 60.0):
     """Lock a persistent guard file, never unlinking another owner's inode.
