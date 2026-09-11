@@ -1,0 +1,160 @@
+{
+  "kind": "fixture_validation_not_agent_performance",
+  "tasks": 30,
+  "projects": 3,
+  "calibration": 6,
+  "test": 24,
+  "passed": 30,
+  "results": [
+    {
+      "task": "booking/can_cancel",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/slot_starts",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/lesson_total",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/has_capacity",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/refund_cents",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/notification_channels",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/format_price",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/is_open",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/local_booking_hour",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "booking/can_reschedule",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/public_gallery",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/valid_upload_size",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/cache_headers",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/allowed_extension",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/retry_delay",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/safe_filename",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/may_read",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/should_purge",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/checksum",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "assets/chunk_ranges",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/retryable_status",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/may_attempt",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/backoff",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/lease_expired",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/idempotency_key",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/ordered_jobs",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/window_count",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/can_enqueue",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/dead_letter",
+      "broken_rejected": true,
+      "reference_passed": true
+    },
+    {
+      "task": "queue/utc_schedule",
+      "broken_rejected": true,
+      "reference_passed": true
+    }
+  ]
+}
