@@ -43,6 +43,21 @@ Two bounded connection pilots then attempted the calibration task `booking/can_c
 
 Saved-login presence does not prove the service will accept the credentials. The next live run requires a working authenticated Codex connection. Raw local pilot diagnostics are excluded from Git and are not published as performance data.
 
+On September 12, 2026, the maintainer chose to defer the live evaluation and continue candidate release preparation without it. Neither batch was started. The adapter and offline regression coverage remain available; no model authentication is required for the candidate's release checks.
+
+## Completed platform CI
+
+[CI run 34687492192](https://github.com/Ninadnj/agent-memory-engine/actions/runs/34687492192), on implementation commit `f18e156c7b0c473c301a816f7f4d0544417c4868`, completed with **7 jobs passed and 1 optional semantic job skipped**.
+
+| Platform | Full hashing suite |
+| --- | --- |
+| Linux, Python 3.10 | 297 passed, 0 failed, 1 skipped |
+| Linux, Python 3.12 | 297 passed, 0 failed, 1 skipped |
+| Windows, Python 3.12 | 297 passed, 0 failed, 1 skipped |
+| macOS, Python 3.12 | 297 passed, 0 failed, 1 skipped |
+
+The other three passing jobs verify both MCP SDK majors and package build/fresh installation. Each full-suite skip is the optional semantic-model module; these results do not establish semantic retrieval quality or live agent performance.
+
 ## Remaining evidence
 
 Current platform CI results are recorded on [PR #6](https://github.com/Ninadnj/agent-memory-engine/pull/6). A workflow definition alone is not evidence of a platform pass.

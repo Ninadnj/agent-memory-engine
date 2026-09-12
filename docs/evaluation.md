@@ -2,6 +2,8 @@
 
 There are two separate checks. Neither establishes production performance by itself.
 
+**v0.4.0rc1 scope:** the live-agent comparison is deferred. The retrieval diagnostic, fixture validation and automated tests run without model calls or model credentials. The live-run commands below remain available for a future evaluation; they are optional and are not part of the candidate's release checks.
+
 ## Retrieval diagnostic
 
 ```bash
@@ -108,4 +110,4 @@ The agent and grader execute code locally. Use a disposable container or VM for 
 
 Missing usage stays unknown; the mean full-session token figure is withheld if any run in that arm lacks telemetry. Errors and timeouts count as failed runs. Report paired per-task differences and uncertainty before generalizing; repeated runs of the same task are not independent new tasks. Elapsed time includes adapter execution and grading, but excludes context construction.
 
-**Current evidence:** fixture validation and runner tests pass. A live coding-agent comparison has not been run in this candidate. The next evidence step is a frozen test-split run, followed by tasks from independently maintained repositories. Do not claim coding improvements or whole-session token savings from the retrieval table or reference fixes.
+**Current evidence:** fixture validation and runner tests pass. The 18-session calibration and 216-session test comparison are deferred for this candidate. If resumed, validate the connection and calibration before freezing settings for the test split; tasks from independently maintained repositories would provide stronger evidence afterward. Do not claim coding improvements or whole-session token savings from the retrieval table or reference fixes.

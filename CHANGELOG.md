@@ -12,7 +12,10 @@
 - Add a two-process MCP handoff demo, 30 executable coding fixtures, and a provider-neutral evaluation adapter contract with honest missing-telemetry reporting.
 - Rewrite onboarding, document compatibility/trust boundaries, and add package/OS/SDK checks.
 - Handle quoted/Windows hook executables without duplicating hooks or deleting unrelated commands; retry transient Windows file-sharing conflicts during atomic replacement.
+- Add an optional Codex CLI evaluation adapter with setup checks, completion-event usage reporting and process cleanup; extend CI to macOS.
 
 **Compatibility:** format 3 writes, required MCP/CLI `expected_revision`, changed deduplication and rendered-budget behavior. Upgrade all shared writers together. See [migration](docs/migration-v0.4.md).
 
-**Evidence still needed:** live client sessions, a live-agent coding comparison and target-platform results beyond the local checks recorded in [release notes](docs/release.md). This candidate makes no new coding-performance claim.
+**Verified:** the full hashing suite passes on Linux, Windows and macOS; both MCP SDK majors and fresh wheel installation pass in [CI](https://github.com/Ninadnj/agent-memory-engine/actions/runs/34687492192). See the [verification record](docs/verification-codex-adapter.md) for counts and scope.
+
+**Deferred:** the live-agent coding comparison is outside this candidate's release scope. Actual coding-client MCP sessions and the optional semantic model remain unverified. This candidate makes no coding-performance or whole-session token-savings claim. See the [release notes](docs/release.md).
