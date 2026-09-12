@@ -1,7 +1,10 @@
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -75,6 +78,61 @@ def test_agent_timeout_is_bounded(tmp_path):
             {"workspace": str(tmp_path)},
             timeout=0.1,
         )
+
+
+def test_timeout_retains_failure_diagnostic(tmp_path):
+    with pytest.raises(TimeoutError, match="waiting for transport"):
+        run_agent(
+            [sys.executable, "-c", "import sys,time; print('waiting for transport', file=sys.stderr, flush=True); time.sleep(30)"],
+            {"workspace": str(tmp_path)}, timeout=1,
+        )
+
+
+def test_agent_timeout_stops_tool_children(tmp_path):
+    heartbeat = tmp_path / "heartbeat"
+    pid_file = tmp_path / "child.pid"
+    child_code = (
+        "import os, time\nfrom pathlib import Path\n"
+        f"Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        f"with open({str(heartbeat)!r}, 'ab', buffering=0) as out:\n"
+        "    for _ in range(500):\n"
+        "        out.write(b'.')\n"
+        "        time.sleep(0.02)\n"
+    )
+    wrapper_code = (
+        "import subprocess, sys, time\n"
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+        "time.sleep(30)\n"
+    )
+    try:
+        with pytest.raises(TimeoutError):
+            run_agent([sys.executable, "-c", wrapper_code], {"workspace": str(tmp_path)}, timeout=2)
+        assert heartbeat.exists(), "tool child did not start before the timeout"
+        size = heartbeat.stat().st_size
+        time.sleep(0.2)
+        assert heartbeat.stat().st_size == size, "tool child survived its timed-out adapter"
+    finally:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGTERM)
+            except OSError:
+                pass
+
+
+def test_runner_preserves_agent_provenance(tmp_path, monkeypatch):
+    import run_tasks
+
+    monkeypatch.setattr(run_tasks, "TASKS", [TASKS[0]])
+    metadata = {"model_identity_source": "requested_cli_argument", "reasoning_effort": "low"}
+    response = {"model": "requested-model", "usage": None, "agent_metadata": metadata}
+    report = evaluate_tasks(
+        [sys.executable, "-c", "print(" + repr(json.dumps(response)) + ")"],
+        output=tmp_path / "results", label="test-double", split="calibration",
+        repetitions=1, agent_config={"cli_version": "test-double"},
+    )
+    assert report["agent_config"] == {"cli_version": "test-double"}
+    rows = [json.loads(row) for row in (tmp_path / "results" / "runs.jsonl").read_text().splitlines()]
+    assert len(rows) == 3 and all(row["agent_metadata"] == metadata for row in rows)
 
 
 def test_errors_count_as_failed_runs_and_missing_usage_stays_unknown():

@@ -32,6 +32,39 @@ python eval/run_tasks.py \
 
 No provider API or credentials are built into this runner. The adapter uses your existing agent and authentication. The default test run invokes it 216 times (24 tasks × 3 arms × 3 repetitions); use calibration with one repetition to check the adapter first. Any provider charges come from the agent you choose.
 
+### Run with Codex CLI
+
+The bundled adapter removes the need to write a wrapper. Install and sign in to Codex CLI in your evaluation environment first. Use an explicit model available to that account in place of `YOUR_MODEL` below; the adapter does not choose a model or start a login flow.
+
+```bash
+# Check installation, required flags and saved login; no model calls.
+python eval/run_tasks.py --codex-model YOUR_MODEL --check-agent
+
+# Adapter calibration: 6 tasks × 3 arms × 1 repetition = 18 sessions.
+AGENT_MEMORY_EMBEDDER=hashing python eval/run_tasks.py \
+  --codex-model YOUR_MODEL --codex-reasoning-effort medium \
+  --split calibration --repetitions 1 --seed 0 \
+  --output eval/task-results/codex-calibration-001
+
+# After checking calibration errors and freezing the settings: 216 sessions.
+AGENT_MEMORY_EMBEDDER=hashing python eval/run_tasks.py \
+  --codex-model YOUR_MODEL --codex-reasoning-effort medium \
+  --split test --repetitions 3 --seed 0 \
+  --output eval/task-results/codex-test-001
+```
+
+Use `--codex-executable /absolute/path/to/codex` if it is outside PATH. On Windows, use a native executable, or run the commands in WSL; shell `.cmd` wrappers are not a supported adapter executable. In PowerShell set `$env:AGENT_MEMORY_EMBEDDER = "hashing"` first and enter each Python command on one line.
+
+Each invocation starts a new `codex exec --json --ephemeral` session with workspace-write permissions. The adapter skips user configuration, disables built-in memory use/generation, web search and subagents, and sends the task and memory in separate text sections. It keeps saved CLI authentication and does not edit configuration or bypass execution rules. Managed settings, global instructions and skills can still affect a run: use a clean, dedicated evaluation environment and document those settings. This adapter measures the effect of **supplied recall text**; it does not test whether Codex independently discovers or calls the MCP tools.
+
+Preflight failures stop before a results directory or paid task session is created. Preflight does not establish model access, available quota or sandbox compatibility; calibration checks those. Keep settings unchanged for the test split and do not tune on test results.
+
+Reports record CLI version, adapter SHA-256, requested model, reasoning effort and per-run model-identity provenance. The CLI event contract does not guarantee a resolved server model version, so the model label is explicitly the **requested CLI argument**, not a verified immutable model ID. Keep aliases and their evaluation date visible when reporting results.
+
+Usage comes from the single `turn.completed` event after tool rounds. Cached-input and reasoning-output components are retained without adding them again to the input/output totals. Missing usage remains null; failed/incomplete sessions, malformed telemetry or multiple completion events are errors. Token totals are CLI telemetry, not a provider billing estimate. The runner retains up to 2,000 bytes of failure stderr in the error field; review diagnostic text before sharing results.
+
+The interface follows OpenAI's [non-interactive mode](https://developers.openai.com/codex/noninteractive), [CLI reference](https://developers.openai.com/codex/cli/reference) and [configuration reference](https://developers.openai.com/codex/config-reference), checked September 12, 2026. Tests use deterministic CLI doubles and real local subprocesses. Preflight also passed against Codex CLI 0.154.0; two live connection pilots timed out with an Unauthorized response in the diagnostic retry. **A completed live Codex task remains unverified.** See the [verification record](verification-codex-adapter.md).
+
 ### Adapter contract
 
 The runner launches the command without a shell, in a fresh temporary workspace for each run, with one JSON request on stdin:
@@ -67,7 +100,7 @@ Numbers above illustrate the schema only. Usage must cover the whole agent sessi
 
 All arms receive identical source and task prompts. The maintained Markdown arm gets current facts rather than being deliberately polluted with old ones. Task/arm/repetition combinations are shuffled with a recorded seed. Checks and reference answers are not included in the agent request or workspace; they are public in this repository, so this is not a benchmark hardened against cheating. Fixture functions intentionally omit some business requirements that memory supplies: that measures policy recovery, not general coding skill.
 
-The agent and grader execute code locally. Use a disposable container or VM for untrusted agents; the runner is **not a sandbox**. On POSIX, timeout cleanup kills the agent process group. On Windows it kills the direct adapter process, so the adapter must clean up its own children. Grading has a separate ten-second timeout. Do not give benchmark agents access to production files or credentials they do not need.
+The agent and grader execute code locally. Use a disposable container or VM for untrusted agents; the runner is **not a sandbox**. On POSIX, timeout cleanup kills the agent process group; adapters must keep tool children in that group. Windows cleanup uses `taskkill /T /F` on the adapter's process tree and reports an error if cleanup fails. Detached or deliberately escaped processes are outside this contract. Grading has a separate ten-second timeout. Do not give benchmark agents access to production files or credentials they do not need.
 
 ### Reporting
 

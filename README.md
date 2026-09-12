@@ -100,7 +100,7 @@ Optional Claude Code hooks inject fresh startup notes and record observed Git ch
 
 The [retrieval benchmark](eval/results.md) is a small diagnostic: 14 memories and seven queries. Its paraphrase results expose the limits of lexical matching. It is not evidence of improved coding outcomes.
 
-The [coding evaluation](docs/evaluation.md) adds **30 executable tasks across three synthetic projects**, with six calibration tasks and 24 test tasks. It compares no memory, curated Markdown and engine recall with the same external agent. [Fixture validation](eval/fixture-validation.json) verifies all 30 graders. **No live-agent performance result is published yet.**
+The [coding evaluation](docs/evaluation.md) adds **30 executable tasks across three synthetic projects**, with six calibration tasks and 24 test tasks. It compares no memory, curated Markdown and engine recall with the same external agent. A [bundled Codex CLI adapter](docs/evaluation.md#run-with-codex-cli) provides setup checks and a direct evaluation command. [Fixture validation](eval/fixture-validation.json) verifies all 30 graders. **No live-agent performance result is published yet.**
 
 ## Install options
 

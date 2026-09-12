@@ -1,5 +1,7 @@
 # v0.4 candidate verification
 
+The subsequent [Codex adapter verification](verification-codex-adapter.md) records the added evaluation integration, process-cleanup tests and macOS CI coverage.
+
 Verified locally on Linux, Python 3.12.14, NumPy 2.3.5, pytest 9.1.1, tiktoken 0.14.0 and MCP 2.2.0. A separate dependency environment tested MCP 1.30.0. The wheel installation check resolved NumPy 2.5.3 and MCP 2.2.0 in a fresh environment.
 
 Work began from the existing UUID fix branch (`1230ca8`), preserving that work and isolating this candidate on `feat/reliable-memory-v0.4`. The original checkout remained untouched. This branch includes the earlier ID fix when compared with main.

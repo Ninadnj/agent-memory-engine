@@ -10,6 +10,7 @@ import argparse
 from dataclasses import asdict
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -132,6 +133,12 @@ def context_for(task: Task, arm: str, budget=400) -> str:
 def run_agent(command: list[str], request: dict, timeout: float) -> dict:
     """One JSON request on stdin, one JSON result on stdout; logs on stderr."""
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        def failure_detail():
+            stderr.seek(0, os.SEEK_END)
+            stderr.seek(max(0, stderr.tell() - 2000))
+            detail = stderr.read().decode("utf-8", errors="replace").strip()
+            return f": {detail}" if detail else ""
+
         process = subprocess.Popen(
             command,
             cwd=request["workspace"],
@@ -144,13 +151,26 @@ def run_agent(command: list[str], request: dict, timeout: float) -> dict:
             process.communicate(json.dumps(request).encode("utf-8"), timeout=timeout)
         except subprocess.TimeoutExpired:
             if os.name == "nt":
-                process.kill()
+                # Killing only the wrapper leaves Codex and its tools running.
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=10, check=True,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    process.kill()
+                    process.wait()
+                    raise RuntimeError("agent timed out; process-tree cleanup failed") from None
             else:
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait()
-            raise TimeoutError("agent timed out") from None
+            raise TimeoutError("agent timed out" + failure_detail()) from None
         if process.returncode:
-            raise RuntimeError(f"agent exited with status {process.returncode}")
+            raise RuntimeError(
+                f"agent exited with status {process.returncode}"
+                + failure_detail()
+            )
         stdout.seek(0)
         raw = stdout.read(1_048_577)
         if len(raw) > 1_048_576:
@@ -163,6 +183,10 @@ def run_agent(command: list[str], request: dict, timeout: float) -> dict:
         ):
             raise ValueError("agent response requires a nonempty model label")
         usage = result.get("usage")
+        if result.get("agent_metadata") is not None and not isinstance(
+            result["agent_metadata"], dict
+        ):
+            raise ValueError("agent_metadata must be an object or null")
         if usage is not None:
             if not isinstance(usage, dict):
                 raise ValueError("usage must be an object or null")
@@ -220,6 +244,7 @@ def evaluate_tasks(
     repetitions=3,
     seed=0,
     timeout=300,
+    agent_config=None,
 ):
     cases = [task for task in TASKS if task.split == split]
     jobs = [
@@ -237,6 +262,7 @@ def evaluate_tasks(
             "kind": "coding_agent_evaluation",
             "fixture_kind": "synthetic_policy_projects",
             "agent_label": label,
+            "agent_config": agent_config,
             "split": split,
             "repetitions": repetitions,
             "seed": seed,
@@ -275,11 +301,13 @@ def evaluate_tasks(
                     "error": None,
                     "usage": None,
                     "model": None,
+                    "agent_metadata": None,
                 }
                 start = time.monotonic()
                 try:
                     result = run_agent(command, request, timeout)
                     row["model"], row["usage"] = result["model"], result.get("usage")
+                    row["agent_metadata"] = result.get("agent_metadata")
                     row["passed"] = grade(workspace, task)
                 except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
                     row["error"] = f"{type(exc).__name__}: {exc}"
@@ -301,10 +329,15 @@ def evaluate_tasks(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verify-fixtures", action="store_true")
-    parser.add_argument(
+    agent = parser.add_mutually_exclusive_group()
+    agent.add_argument(
         "--agent-command",
         help="JSON argv array, e.g. '[\"/absolute/path/to/wrapper\"]'",
     )
+    agent.add_argument("--codex-model", help="Use the bundled Codex CLI adapter with this model")
+    parser.add_argument("--codex-executable", default="codex")
+    parser.add_argument("--codex-reasoning-effort", default="medium")
+    parser.add_argument("--check-agent", action="store_true", help="Check Codex setup without model calls")
     parser.add_argument(
         "--agent-label", help="model/settings/version identifier for reproducibility"
     )
@@ -318,20 +351,49 @@ def main():
         result = verify_fixtures()
         print(json.dumps(result, indent=2))
         raise SystemExit(0 if result["passed"] == result["tasks"] else 1)
-    if not args.agent_command or not args.agent_label:
-        parser.error("provide --agent-command and --agent-label, or --verify-fixtures")
-    try:
-        command = json.loads(args.agent_command)
-    except ValueError:
-        parser.error("--agent-command must be a JSON argv array")
+    if args.repetitions < 1 or not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("repetitions and timeout must be positive and finite")
+    agent_config = None
+    if args.codex_model:
+        from codex_adapter import REASONING_EFFORTS, check_cli
+
+        if not args.codex_model.strip():
+            parser.error("--codex-model must not be empty")
+        if args.codex_reasoning_effort not in REASONING_EFFORTS:
+            parser.error("unsupported --codex-reasoning-effort")
+        try:
+            agent_config = check_cli(args.codex_executable)
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+        agent_config.update(
+            requested_model=args.codex_model,
+            reasoning_effort=args.codex_reasoning_effort,
+            sandbox="workspace-write", user_config_loaded=False,
+        )
+        if args.check_agent:
+            print(json.dumps(agent_config, indent=2))
+            return
+        command = [
+            sys.executable, str(ROOT / "eval" / "codex_adapter.py"),
+            "--model", args.codex_model, "--codex-executable", agent_config["executable"],
+            "--reasoning-effort", args.codex_reasoning_effort,
+        ]
+        args.agent_label = args.agent_label or f"{agent_config['cli_version']}/{args.codex_model}"
+    else:
+        if args.check_agent:
+            parser.error("--check-agent requires --codex-model")
+        if not args.agent_command or not args.agent_label:
+            parser.error("provide --codex-model OR (--agent-command and --agent-label), or --verify-fixtures")
+        try:
+            command = json.loads(args.agent_command)
+        except ValueError:
+            parser.error("--agent-command must be a JSON argv array")
     if (
         not isinstance(command, list)
         or not command
         or any(not isinstance(x, str) for x in command)
     ):
         parser.error("--agent-command must be a nonempty JSON array of strings")
-    if args.repetitions < 1 or args.timeout <= 0:
-        parser.error("repetitions and timeout must be positive")
     print(
         json.dumps(
             evaluate_tasks(
@@ -342,6 +404,7 @@ def main():
                 repetitions=args.repetitions,
                 seed=args.seed,
                 timeout=args.timeout,
+                agent_config=agent_config,
             ),
             indent=2,
         )
