@@ -12,3 +12,5 @@ venv/
 .DS_Store
 # local memory store
 .agent_memory/
+# Agent evaluation runs may contain local diagnostics; publish reviewed results explicitly.
+eval/task-results/

@@ -78,7 +78,19 @@ class HashingEmbedder:
     recommended_min_score = 0.15
 
     def __init__(self, dim: int = 512) -> None:
+        if isinstance(dim, bool) or not isinstance(dim, int) or dim < 1:
+            raise ValueError("embedding dimension must be a positive integer")
         self.dim = dim
+
+    @property
+    def configuration(self) -> dict:
+        return {
+            "backend": "hashing",
+            "features_version": 1,
+            "dim": self.dim,
+            "normalization": "l2",
+            "hash": "blake2b-64",
+        }
 
     def _hash(self, feature: str) -> tuple[int, float]:
         digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=8).digest()
@@ -111,10 +123,14 @@ class SentenceTransformerEmbedder:
     # run higher than the hashing embedder's, which is why this differs from it.
     recommended_min_score = 0.20
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+    def __init__(
+        self, model_name: str = "all-MiniLM-L6-v2", revision: str | None = None
+    ) -> None:
         from sentence_transformers import SentenceTransformer  # lazy import
 
-        self._model = SentenceTransformer(model_name)
+        self._model = SentenceTransformer(
+            model_name, **({"revision": revision} if revision else {})
+        )
         # Renamed in sentence-transformers 5.x; support both so an upgrade of an
         # optional dependency cannot break the backend.
         get_dim = getattr(
@@ -129,6 +145,17 @@ class SentenceTransformerEmbedder:
             )
         self.dim = int(get_dim())
         self.model_name = model_name
+        self.revision = revision
+
+    @property
+    def configuration(self) -> dict:
+        return {
+            "backend": "sentence-transformers",
+            "model": self.model_name,
+            "revision": self.revision,
+            "dim": self.dim,
+            "normalization": "l2",
+        }
 
     def embed(self, texts: list[str]) -> np.ndarray:
         vecs = self._model.encode(
@@ -149,6 +176,23 @@ def default_min_score(embedder: Embedder) -> float:
     if override is not None:
         return float(override)
     return float(getattr(embedder, "recommended_min_score", 0.0))
+
+
+def embedding_config(embedder: Embedder) -> dict:
+    """Stable persisted configuration; custom embedders may expose a dict.
+
+    Model revisions should be immutable commit IDs. A floating model name
+    cannot detect a remote weight change that retains the same name.
+    """
+    config = getattr(embedder, "configuration", None)
+    if config is not None:
+        return dict(config)
+    return {
+        "backend": f"{type(embedder).__module__}.{type(embedder).__qualname__}",
+        "dim": embedder.dim,
+        "model": getattr(embedder, "model_name", None),
+        "revision": getattr(embedder, "revision", None),
+    }
 
 
 def default_embedder() -> Embedder:

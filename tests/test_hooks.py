@@ -91,7 +91,7 @@ def test_session_start_respects_a_token_budget(repo, monkeypatch):
     context = hooks.session_start(payload(repo, "SessionStart"))["additionalContext"]
     memories = [ln for ln in context.splitlines() if ln.startswith("- [")]
     assert memories, "should still inject something"
-    assert sum(count_tokens(ln) for ln in memories) <= 40 + 10  # + list markers
+    assert count_tokens(context) <= 40  # includes every heading and label
 
 
 def test_session_start_records_a_marker(repo):

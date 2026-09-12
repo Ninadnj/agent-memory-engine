@@ -1,3 +1,7 @@
+from dataclasses import asdict
+import uuid
+
+import numpy as np
 import pytest
 
 from agent_memory import HashingEmbedder, MemoryStore
@@ -167,3 +171,69 @@ def test_latest_returns_most_recent_handoff(store):
     latest = store.latest("handoff")
     assert latest is not None and latest.agent == "codex"
     assert store.latest("worklog") is None
+
+
+def test_generated_ids_are_prefixed_uuids(store):
+    ids = [entry.id for entry in store.all()]
+    assert len(set(ids)) == len(ids)
+    for entry_id in ids:
+        assert entry_id.startswith("mem_")
+        assert uuid.UUID(entry_id.removeprefix("mem_")).version == 4
+
+
+@pytest.mark.parametrize("operation", ["update", "forget"])
+@pytest.mark.parametrize("keep_other_memory", [False, True])
+def test_stale_id_cannot_modify_replacement_memory(operation, keep_other_memory):
+    store = MemoryStore(embedder=HashingEmbedder())
+    if keep_other_memory:
+        store.write("Bookings are stored in UTC.")
+    old_id = store.write("The retired staging server uses port 5002.").id
+    assert store.forget(old_id) is True
+    replacement = store.write("Customer invoices are archived monthly.")
+    before = [asdict(entry) for entry in store.all()]
+    vectors = store._matrix.copy()
+
+    if operation == "update":
+        assert store.update(old_id, text="Incorrect stale update.") is None
+    else:
+        assert store.forget(old_id) is False
+
+    assert replacement.id != old_id
+    assert [asdict(entry) for entry in store.all()] == before
+    np.testing.assert_array_equal(store._matrix, vectors)
+
+
+@pytest.mark.parametrize("entry_id", ["caller-note", "mem_0001", ""])
+def test_unique_explicit_ids_are_preserved(entry_id):
+    store = MemoryStore(embedder=HashingEmbedder())
+    entry = store.write("Bookings are stored in UTC.", id=entry_id)
+    assert entry.id == entry_id
+    assert store.update(entry_id, text="Bookings use UTC timestamps.").id == entry_id
+    assert store.forget(entry_id) is True
+
+
+@pytest.mark.parametrize("method", ["write", "write_with_status"])
+@pytest.mark.parametrize("same_text", [False, True])
+def test_duplicate_explicit_id_is_rejected_without_mutation(store, method, same_text):
+    original = store.all()[0]
+    before = [asdict(entry) for entry in store.all()]
+    vectors = store._matrix.copy()
+    text = original.text if same_text else "Customer invoices are archived monthly."
+
+    with pytest.raises(ValueError, match=f"duplicate memory id.*{original.id}"):
+        getattr(store, method)(text, id=original.id, metadata={"changed": True})
+
+    assert [asdict(entry) for entry in store.all()] == before
+    np.testing.assert_array_equal(store._matrix, vectors)
+
+
+def test_generated_id_does_not_collide_with_explicit_uuid(monkeypatch):
+    first = uuid.UUID("dfb14a16-1040-41d6-8089-1a485c4775ec")
+    second = uuid.UUID("f0ba6ac5-c07c-4368-bfca-376177b0561c")
+    candidates = iter([first, second])
+    monkeypatch.setattr(uuid, "uuid4", lambda: next(candidates))
+    store = MemoryStore(embedder=HashingEmbedder())
+    explicit = store.write("Bookings are stored in UTC.", id=f"mem_{first.hex}")
+    generated = store.write("Customer invoices are archived monthly.")
+    assert generated.id == f"mem_{second.hex}"
+    assert store.all() == [explicit, generated]
