@@ -7,11 +7,11 @@ crash-safe writes.
 """
 
 import base64
-from dataclasses import asdict
 import json
 import subprocess
 import sys
 import textwrap
+from dataclasses import asdict
 
 import numpy as np
 import pytest

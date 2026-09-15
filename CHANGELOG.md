@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0rc2 — independent snapshots and a simpler core
+
+- Return detached entries from every public operation, including nested source,
+  metadata and history. Caller mutations cannot bypass revisions or re-embedding.
+- Serialize operations on each store object with a reentrant thread lock. Readers
+  cannot observe a partial write or a change that later rolls back.
+- Separate record rules (`models.py`) and JSON persistence (`persistence.py`)
+  from memory operations. Preserve format 3, old IDs and migration support.
+- Replace `dedup_threshold` with explicit `deduplicate=False`; make the writing
+  agent keyword-only and document the Python compatibility changes.
+- Default new stores to offline hashing. Preserve existing backend configuration,
+  require semantic opt-in, and reject unknown configuration values.
+- Share display tags, avoid copying full histories just to count candidates,
+  and make evaluation output directories work on first use.
+- Add API ownership and concurrent-read regressions, an architecture walkthrough,
+  and project-local lint/format checks in CI.
+
+See [migration](docs/migration-v0.4.md) and [verification](docs/verification-rc2.md).
+The optional semantic-model and live-agent comparisons remain outside this
+candidate's verified scope.
+
 ## 0.4.0rc1 — release candidate
 
 - Generate UUID4 memory IDs and reject duplicate explicit IDs; retain legacy and caller-supplied identities.

@@ -7,24 +7,25 @@ from .embeddings import (
     default_embedder,
     default_min_score,
 )
-from .store import (
-    GLOBAL_STORE,
+from .models import (
     HALF_LIFE_DAYS,
     MEMORY_TYPES,
-    STORE_FORMAT,
-    MemoryEntry,
     MemoryConflictError,
-    StoreFormatError,
-    MemoryStore,
+    MemoryEntry,
     RecallHit,
     age_in_days,
     decay_factor,
+)
+from .persistence import STORE_FORMAT, StoreFormatError
+from .store import (
+    GLOBAL_STORE,
+    MemoryStore,
     default_store_path,
     find_project_root,
 )
 from .tokens import count_tokens
 
-__version__ = "0.4.0rc1"
+__version__ = "0.4.0rc2"
 
 __all__ = [
     "MemoryStore",

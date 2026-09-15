@@ -7,34 +7,15 @@ Two properties matter most here and are tested hardest:
 """
 
 import io
-from pathlib import Path
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from agent_memory import hooks
 
-
-@pytest.fixture(autouse=True)
-def offline(monkeypatch):
-    monkeypatch.setenv("AGENT_MEMORY_EMBEDDER", "hashing")
-    monkeypatch.setenv("AGENT_MEMORY_AGENT", "claude-code")
-
-
-@pytest.fixture
-def repo(tmp_path):
-    """A real git repository with one commit."""
-    root = tmp_path / "project"
-    root.mkdir()
-    run = lambda *a: subprocess.run(a, cwd=root, capture_output=True, check=True)
-    run("git", "init", "-q")
-    run("git", "config", "user.email", "t@example.com")
-    run("git", "config", "user.name", "Test")
-    (root / "app.py").write_text("v1\n")
-    run("git", "add", "-A")
-    run("git", "commit", "-qm", "initial commit")
-    return root
+pytestmark = pytest.mark.usefixtures("offline")
 
 
 def payload(root, event, **extra):

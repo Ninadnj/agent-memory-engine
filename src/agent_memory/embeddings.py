@@ -11,8 +11,8 @@ The engine never imports a heavy model directly. It depends on the small
   ``sentence-transformers`` (optional dependency). Drops in unchanged and
   improves recall on paraphrases/synonyms.
 
-Select one with ``default_embedder()``, which prefers the real model when it
-is installed and not disabled via ``AGENT_MEMORY_EMBEDDER=hashing``.
+New stores use hashing unless ``AGENT_MEMORY_EMBEDDER=sentence-transformers``
+is explicitly selected. Installing optional packages does not change defaults.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import sys
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -49,6 +48,14 @@ class Embedder(Protocol):
 
     def embed(self, texts: list[str]) -> np.ndarray:  # (n, dim) float32
         ...
+
+
+def validated_embed(embedder: Embedder, texts: list[str]) -> np.ndarray:
+    """Reject invalid backend output before it can reach live or persisted state."""
+    vectors = np.asarray(embedder.embed(texts), dtype=np.float32)
+    if vectors.shape != (len(texts), embedder.dim) or not np.isfinite(vectors).all():
+        raise ValueError("embedder returned invalid vectors")
+    return vectors
 
 
 def _features(text: str) -> list[str]:
@@ -196,30 +203,23 @@ def embedding_config(embedder: Embedder) -> dict:
 
 
 def default_embedder() -> Embedder:
-    """Prefer the real model when available; fall back to hashing.
+    """Offline by default; semantic retrieval is an explicit choice.
 
-    ``AGENT_MEMORY_EMBEDDER`` selects explicitly: ``hashing`` forces the offline
-    embedder (CI does this so results are byte-stable), ``sentence-transformers``
-    demands the real one and raises if it cannot be loaded. The default is
-    ``auto``, which tries the real model and warns — loudly, on stderr — before
-    falling back, because the two produce incompatible vectors and a silent
-    switch is how a store ends up half-embedded by each.
+    MemoryStore resolves ``auto`` from a saved store's configuration first.
+    For new stores (or standalone use here), ``auto`` means hashing.
     """
-    choice = os.environ.get("AGENT_MEMORY_EMBEDDER", "auto").lower()
-    if choice == "hashing":
+    choice = os.environ.get("AGENT_MEMORY_EMBEDDER", "auto").strip().lower()
+    if choice in {"auto", "hashing"}:
         return HashingEmbedder()
+    if choice not in {"sentence-transformers", "sentence_transformers", "real"}:
+        raise ValueError(
+            f"unknown AGENT_MEMORY_EMBEDDER={choice!r}; "
+            "use hashing, sentence-transformers or auto"
+        )
     try:
         return SentenceTransformerEmbedder()
     except Exception as exc:
-        if choice in {"sentence-transformers", "sentence_transformers", "real"}:
-            raise RuntimeError(
-                f"AGENT_MEMORY_EMBEDDER={choice} but sentence-transformers could "
-                f'not be loaded: {exc}. Install it with: pip install "agent-memory-engine[real]"'
-            ) from exc
-        print(
-            f"[agent-memory] sentence-transformers unavailable ({exc.__class__.__name__}); "
-            "using the offline HashingEmbedder. Set AGENT_MEMORY_EMBEDDER=hashing to "
-            "silence this.",
-            file=sys.stderr,
-        )
-    return HashingEmbedder()
+        raise RuntimeError(
+            f"AGENT_MEMORY_EMBEDDER={choice} but sentence-transformers could "
+            f'not be loaded: {exc}. Install it with: pip install "agent-memory-engine[real]"'
+        ) from exc

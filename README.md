@@ -10,7 +10,23 @@ Keep architectural decisions, bug findings and session handoffs in one project s
 
 For developers switching between coding agents or returning to a project after a break. It provides a Python library, CLI and local MCP server. No model API key is required; the lightweight installation uses offline lexical retrieval.
 
-**v0.4 release candidate:** new correction APIs and store format. Existing IDs remain intact. Read the [migration notes](docs/migration-v0.4.md) before upgrading a shared store.
+**v0.4.0rc2:** independent memory snapshots, thread-safe operations and explicit offline defaults. Existing IDs and the format-3 store remain intact. Read the [migration notes](docs/migration-v0.4.md) for Python API changes.
+
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    Clients[CLI / MCP / hooks] --> Context[Rendering and diagnostics]
+    Clients --> Store[MemoryStore]
+    Context --> Store
+    Store --> Records[Records and validation]
+    Store --> Embeddings[Embedding backend]
+    Store --> Disk[Atomic JSON persistence]
+```
+
+One Python package, one project store, one implementation of memory operations. `MemoryStore` owns writes, corrections and retrieval; small supporting modules handle records, embeddings and disk storage. Client adapters share the same behavior. The only required dependency is NumPy.
+
+The interesting engineering is in the boundaries: a stale edit is rejected, a failed write rolls back, a caller cannot mutate stored state through a returned object, and recalled text stays inside its token budget. The [architecture guide](docs/architecture.md) explains the design and tradeoffs.
 
 ## Try it in five minutes
 
@@ -62,6 +78,8 @@ assert store.get(old.id).superseded_by == new.id
 
 Use `update` for a correction to the same memory, `supersede` for a replacement decision, and `forget` for permanent deletion. MCP and CLI edits require the revision you read. Python accepts `expected_revision` for compatibility; **pass it when multiple callers can edit**. Updates retain the last 20 prior revisions. Forgetting removes the entry and its history from the current store.
 
+Python methods return independent snapshots. Editing `entry.text`, `entry.source` or `entry.history` changes only that local copy; persist corrections with `store.update(...)`. An earlier snapshot keeps its original revision even after another caller updates the store.
+
 CLI equivalents, replacing `MEMORY_ID` and revision with values from `list`:
 
 ```bash
@@ -95,12 +113,13 @@ Optional Claude Code hooks inject fresh startup notes and record observed Git ch
 
 - New IDs use `mem_` plus UUID4. Deletion cannot reset an ID counter. Unique explicit IDs and legacy `mem_0001` IDs remain usable; duplicate explicit IDs are rejected.
 - Mutations reload under an OS lock and replace the JSON file atomically. Failed writes roll back the local snapshot. This contract covers cooperating v0.4 processes on a local filesystem.
+- A per-store thread lock prevents concurrent calls from seeing partially applied changes. Returned records include independent copies of nested metadata and history.
 - Correction revisions reject stale edits. Superseded notes leave normal recall; old handoffs and worklogs leave startup context. Exact duplicates are skipped only within the same type and source; similar wording never silently merges a contradiction.
 - MCP/CLI context budgets include the returned text's labels, IDs and source references. `cl100k_base` is used when tiktoken is installed, otherwise counting is approximate. Client wrappers, tool schemas and full session usage are outside this budget. The Python store API budgets memory bodies only.
 
 The [retrieval benchmark](eval/results.md) is a small diagnostic: 14 memories and seven queries. Its paraphrase results expose the limits of lexical matching. It is not evidence of improved coding outcomes.
 
-The [coding evaluation](docs/evaluation.md) adds **30 executable tasks across three synthetic projects**, with six calibration tasks and 24 test tasks. It compares no memory, curated Markdown and engine recall with the same external agent. A [bundled Codex CLI adapter](docs/evaluation.md#run-with-codex-cli) provides setup checks and a direct evaluation command. [Fixture validation](eval/fixture-validation.json) verifies all 30 graders. **The live-agent comparison is deferred for v0.4.0rc1; no live-agent performance result is published.** You can install, use and test the engine without running that comparison or supplying model credentials.
+The [coding evaluation](docs/evaluation.md) adds **30 executable tasks across three synthetic projects**, with six calibration tasks and 24 test tasks. It compares no memory, curated Markdown and engine recall with the same external agent. A [bundled Codex CLI adapter](docs/evaluation.md#run-with-codex-cli) provides setup checks and a direct evaluation command. [Fixture validation](eval/fixture-validation.json) verifies all 30 graders. **The live-agent comparison remains deferred; no live-agent performance result is published.** You can install, use and test the engine without running that comparison or supplying model credentials.
 
 ## Install options
 
@@ -111,7 +130,7 @@ The [coding evaluation](docs/evaluation.md) adds **30 executable tasks across th
 | `pip install -e ".[real,mcp]"` | Adds optional sentence-transformers embeddings and tiktoken; first model use can download weights |
 | `pip install -e ".[dev]"` | Tests, MCP, exact tokenizer and build tools |
 
-Set `AGENT_MEMORY_EMBEDDER=hashing` for offline behavior. A new store otherwise prefers the semantic backend when installed. Existing v0.4 stores retain their embedding configuration unless explicitly overridden. Configuration changes trigger re-embedding; immutable model revisions are recommended for reproducibility.
+New stores use offline hashing by default, even if semantic packages are installed. Set `AGENT_MEMORY_EMBEDDER=sentence-transformers` to opt into semantic retrieval, or pass an explicit embedder in Python. An unset value (or `auto`) reuses an existing v0.4 store's saved backend and model configuration. Unknown values fail with an actionable error. Configuration changes trigger re-embedding; immutable model revisions are recommended for reproducibility.
 
 ## Scope
 

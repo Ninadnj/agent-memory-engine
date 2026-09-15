@@ -1,15 +1,15 @@
 """Traceable corrections and failure atomicity through public store operations."""
 
-from dataclasses import asdict
 import json
+from dataclasses import asdict
 
 import numpy as np
 import pytest
 
 from agent_memory import (
     HashingEmbedder,
-    MemoryStore,
     MemoryConflictError,
+    MemoryStore,
     StoreFormatError,
 )
 from agent_memory.rendering import recall_context
@@ -143,7 +143,7 @@ def test_failed_disk_replace_rolls_back_data_and_cleans_tempfile(
     def fail(*args):
         raise OSError("disk unavailable")
 
-    monkeypatch.setattr("agent_memory.store.os.replace", fail)
+    monkeypatch.setattr("agent_memory._locking.os.replace", fail)
     with pytest.raises(OSError):
         if operation == "write":
             store.write("Images are private.")

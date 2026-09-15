@@ -1,29 +1,124 @@
 # Architecture
 
-The engine keeps a small in-memory list of entries and a NumPy embedding matrix, persisted as JSON with base64 vectors. CLI, MCP and hooks share the same store implementation. There is no separate database service.
+Agent Memory Engine is a local Python library with CLI, MCP and hook adapters.
+Its job is to preserve useful project knowledge, retrieve a small relevant
+context, and make corrections safe when several agents share the store.
 
-## Identity and writes
+## Responsibilities
 
-Every generated identity is `mem_` plus `uuid.uuid4().hex`. The store checks current IDs as a collision guard; explicit caller IDs are preserved and duplicates rejected before mutation. IDs are never recomputed from the remaining records.
+These are module boundaries inside one package, not separate services.
 
-A mutation acquires an OS advisory lock, reloads a changed file, validates the caller's revision, computes embeddings, applies the change, then atomically replaces the JSON. Failed embedding or persistence operations restore the local entry and vector snapshots. The file stamp includes mtime, size and inode. Reads observe replacement on their next call. Deleting the backing file clears the next snapshot rather than resurrecting it.
+| Role | Modules | Responsibility |
+| --- | --- | --- |
+| Interfaces | `cli.py`, `mcp_server.py`, `hooks.py` | Translate commands, tool calls and client events into memory operations. |
+| Presentation | `rendering.py`, `diagnostics.py` | Pack complete context blocks, explain selection and inspect source references. |
+| Engine | `store.py` | Own entries and vectors; coordinate writes, revisions, supersession, retrieval and transactions. |
+| Records | `models.py` | Define memory records, input validation, history limits and freshness rules. No disk access or model loading. |
+| Infrastructure | `persistence.py`, `_locking.py`, `embeddings.py`, `tokens.py` | Encode/decode JSON, replace files safely, lock writers, embed text and count tokens. |
 
-The JSON contains an embedding configuration: backend, dimensions, model/revision when applicable, and normalization or feature-version information. Mismatches cause re-embedding. A floating remote model name cannot establish that downloaded weights stayed identical; use an immutable revision when that matters.
+The engine never imports a client adapter. Persistence never decides which
+memory should change. All clients use the same core operations. Public imports
+such as `from agent_memory import MemoryStore, MemoryEntry` stay stable.
 
-## Corrections and evidence
+```mermaid
+flowchart TD
+    Clients[CLI / MCP / hooks] --> Context[Rendering and diagnostics]
+    Clients --> Store[MemoryStore]
+    Context --> Store
+    Store --> Models[Records and validation]
+    Store --> Embeddings[Embedding backend]
+    Store --> Persistence[JSON snapshots]
+    Persistence --> Models
+    Persistence --> Embeddings
+    Store --> Locks[OS writer lock]
+    Persistence --> File[(Project store.json)]
+```
 
-An entry has original creation provenance, current revision, last update provenance, optional source references, and up to 20 prior snapshots. A replacement marks the old record superseded and records the replacement ID. Source checks only compare a project-relative file against a Git commit; they do not evaluate text or execute stored instructions.
+`eval/`, `tests/`, `scripts/` and `examples/` are development and demonstration
+tools. They do not become runtime dependencies of the package.
 
-Expected revisions provide optimistic concurrency control for one record. They are required at the agent-facing edit boundary and optional for legacy Python calls. This is not a multi-record transaction API or tamper-proof audit system. Python entry objects remain mutable for backward compatibility; use the mutation methods when revision tracking matters.
+## A write, step by step
 
-## Retrieval and rendering
+1. Acquire the store's thread lock and validate input.
+2. Acquire the OS writer lock and reload any change made by another process.
+3. Check the expected revision, if supplied. Reject stale edits before mutation.
+4. Compute the embedding and apply the change to the in-memory snapshot.
+5. Validate and serialize the complete snapshot, flush and fsync a temporary
+   file, then atomically replace the JSON file.
+6. Return an independent copy of the result. If a mutation or save fails,
+   restore the prior entries, vectors and file stamp before releasing the lock.
 
-Recall ranks active records by embedding dot product, with age decay for state, handoff and worklog types. Durable facts and decisions do not decay automatically. Startup also imposes hard age limits on handoffs and worklogs so a low relevance floor cannot revive months-old startup instructions.
+There are two locks because they protect different things. The reentrant thread
+lock protects one store object, including readers and in-memory stores. The OS
+lock serializes writers in separate processes using the same file. A concurrent
+reader of the same object cannot see a write that later rolls back. Separate
+processes read either the previous complete file or the new complete file.
 
-The store-level budget is the sum of memory body tokens. The presentation layer packs complete rendered blocks and counts labels, IDs, dates, source references and separators. It skips an oversized block and tries the next candidate. Protocol envelopes, tool descriptions and client-added formatting remain outside that text budget.
+The OS releases its lock when a process exits. A persistent `.guard` file names
+the lock; its existence does not mean a writer is active. Windows replacement
+retries cover brief file-sharing conflicts. This contract is for cooperating
+v0.4 processes on a local filesystem, not network shares or mixed-version writers.
 
-Hashing is lexical: synonyms and paraphrases can be missed. Optional sentence-transformers provides a semantic backend, but still needs evaluation for the target workload. Similarity is never used to merge memories; a changed number or negation must not silently disappear.
+## Identity, snapshots and corrections
 
-## Tradeoffs
+Generated IDs use UUID4, independent of the number of remaining records. Legacy
+and explicit unique IDs remain usable. `write` skips only exact text after
+whitespace normalization with the same type and source; `deduplicate=False`
+explicitly stores another occurrence. Similar wording cannot silently merge
+a contradiction.
 
-Writes serialize through one lock and rewrite the whole file. Recall is a linear matrix scan. These choices keep deployment and recovery understandable for small local stores. Benchmark actual workload size and contention before introducing a vector database, distributed locks, background workers or automatic summarization.
+Every public method returns detached records, including nested metadata, sources
+and history. A local edit cannot leave the stored text and embedding out of sync.
+An earlier read also retains its earlier revision:
+
+```python
+earlier = store.get(memory_id)       # revision 1
+store.update(memory_id, "Corrected fact.", expected_revision=1)
+assert earlier.revision == 1        # the earlier read has not changed
+# Deleting with expected_revision=earlier.revision now raises MemoryConflictError.
+```
+
+`update` preserves identity and records the prior revision. `supersede` creates
+a replacement identity and retires the old record in the same transaction.
+Normal recall excludes retired records; inspection still exposes their history.
+The last 20 prior revisions are retained. `forget` removes a record and its
+history from the current store; backups are separate copies.
+
+Revision checks are required in CLI/MCP edits and optional in Python for
+compatibility. Use them for all Python edits involving multiple callers.
+Source checks compare a project-relative file with a recorded Git commit;
+they are evidence for review, not proof that the memory's claim is true.
+
+## Retrieval and context
+
+Recall embeds the query, scores the matrix by dot product, applies age decay to
+state/handoff/worklog records, filters retired or weak matches, and returns the
+best candidates. Durable decisions and facts do not decay. Startup additionally
+excludes handoffs older than 14 days and worklogs older than 42 days.
+
+The Python store budget counts memory bodies. CLI/MCP rendering counts complete
+blocks, including IDs, dates, source references and separators. If a block is
+too large, it tries the next candidate instead of truncating a warning or fact.
+`cl100k_base` is used when tiktoken is available; the fallback is approximate.
+Tool schemas, protocol envelopes and client wrappers are outside this text budget.
+
+New stores default to offline feature hashing. Semantic embeddings are explicit
+and optional. Existing stores retain their recorded backend unless overridden;
+a changed configuration causes re-embedding. A floating model name cannot
+detect changed remote weights, so pin an immutable revision when reproducing results.
+
+## Why this stays small
+
+| Decision | Benefit | Cost / limit |
+| --- | --- | --- |
+| JSON + NumPy | Easy installation, inspection, backup and recovery. | Every write rewrites the file; scoring scans all vectors and ranking sorts them. |
+| One concrete store | One place to understand memory behavior. | A different backend would need a measured reason and a migration. |
+| Detached snapshots | Clear ownership and reliable revision checks. | Returned records and nested history must be copied. |
+| Explicit semantic opt-in | Predictable offline startup and dependencies. | Hashing misses synonyms and paraphrases. |
+| Thin adapters | Consistent behavior across clients. | Client-specific protocol and event handling still need tests. |
+
+The intended workload is hundreds of project memories. The file limit is
+128 MiB; it is a validation guard, not a performance promise. Measure actual
+latency and contention before adding a database, vector index, background worker
+or model-driven summarizer. The [evaluation guide](evaluation.md) separates
+retrieval diagnostics, grader validation and live-agent evidence.

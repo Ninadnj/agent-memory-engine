@@ -4,7 +4,8 @@ Accounting uses cl100k_base when available, otherwise the documented
 approximation. It excludes protocol/tool schemas and client-added wrappers.
 """
 
-from .store import MemoryStore, _validate_limits
+from .models import _validate_limits
+from .store import MemoryStore
 from .tokens import count_tokens
 
 
@@ -56,9 +57,7 @@ def recall_context(
     _validate_limits(k, budget, min_score)
     if k == 0:
         return ""
-    hits = store.recall(
-        query, k=max(1, len(store.all())), min_score=min_score, decay=decay
-    )
+    hits = store.recall(query, k=max(1, len(store)), min_score=min_score, decay=decay)
     return pack_blocks(
         (render_entry(hit.entry, identity=identity) for hit in hits), budget, limit=k
     )
@@ -66,7 +65,7 @@ def recall_context(
 
 def boot_context(store: MemoryStore, task: str, *, budget=300, min_score=0.0) -> str:
     handoff, hits = store.boot(
-        task, k=max(1, len(store.all())), budget_tokens=None, min_score=min_score
+        task, k=max(1, len(store)), budget_tokens=None, min_score=min_score
     )
     blocks = []
     if handoff:
