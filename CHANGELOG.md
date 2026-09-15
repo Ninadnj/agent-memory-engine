@@ -6,6 +6,10 @@
   metadata and history. Caller mutations cannot bypass revisions or re-embedding.
 - Serialize operations on each store object with a reentrant thread lock. Readers
   cannot observe a partial write or a change that later rolls back.
+- Build startup context from one snapshot so another writer's correction cannot
+  mix a retired handoff with its replacement in the same response.
+- Count literal tokenizer markers as ordinary text, preserving recall, statistics
+  and rendered budgets for memories that quote those markers.
 - Separate record rules (`models.py`) and JSON persistence (`persistence.py`)
   from memory operations. Preserve format 3, old IDs and migration support.
 - Replace `dedup_threshold` with explicit `deduplicate=False`; make the writing

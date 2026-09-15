@@ -54,6 +54,12 @@ lock serializes writers in separate processes using the same file. A concurrent
 reader of the same object cannot see a write that later rolls back. Separate
 processes read either the previous complete file or the new complete file.
 
+Startup selects its handoff and recall results from one in-memory snapshot.
+It refreshes once when selecting the handoff, then scores that same snapshot
+without another disk reload. A concurrent correction appears on the next call,
+not mixed with its retired predecessor in the current response. This does not
+require blocking other processes' writers while building context.
+
 The OS releases its lock when a process exits. A persistent `.guard` file names
 the lock; its existence does not mean a writer is active. Windows replacement
 retries cover brief file-sharing conflicts. This contract is for cooperating
@@ -100,6 +106,8 @@ The Python store budget counts memory bodies. CLI/MCP rendering counts complete
 blocks, including IDs, dates, source references and separators. If a block is
 too large, it tries the next candidate instead of truncating a warning or fact.
 `cl100k_base` is used when tiktoken is available; the fallback is approximate.
+Tokenizer markers quoted in memories are counted as ordinary text, not control
+tokens, so valid memory content cannot trip special-token validation.
 Tool schemas, protocol envelopes and client wrappers are outside this text budget.
 
 New stores default to offline feature hashing. Semantic embeddings are explicit

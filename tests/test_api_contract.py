@@ -7,6 +7,7 @@ from dataclasses import asdict
 import pytest
 
 from agent_memory import HashingEmbedder, MemoryConflictError, MemoryStore, embeddings
+from agent_memory.rendering import boot_context
 
 
 @pytest.mark.parametrize(
@@ -181,3 +182,41 @@ def test_concurrent_reader_cannot_observe_a_write_that_rolls_back(
         with pytest.raises(OSError, match="disk unavailable"):
             writer.result(timeout=5)
         assert reader.result(timeout=5) == "Bookings use UTC."
+
+
+@pytest.mark.parametrize("rendered", [False, True], ids=["library", "rendered"])
+def test_boot_uses_one_snapshot_when_another_store_replaces_the_handoff(
+    tmp_path, monkeypatch, rendered
+):
+    path = tmp_path / "memory.json"
+    writer = MemoryStore(path, HashingEmbedder())
+    old = writer.write("Deployment is approved. Next: deploy now.", type="handoff")
+    fact = writer.write("Deployment requires a verified backup.")
+    reader = MemoryStore(path, HashingEmbedder())
+    replacement_text = "Deployment is NOT approved. Next: wait for review."
+    latest = reader.latest
+
+    def latest_then_replace(*args, **kwargs):
+        handoff = latest(*args, **kwargs)
+        # Deterministically interleave a separate store's committed write between
+        # handoff selection and recall; no scheduling sleeps are necessary.
+        writer.supersede(old.id, replacement_text, expected_revision=1)
+        return handoff
+
+    def context():
+        if rendered:
+            return boot_context(reader, "Deployment", budget=1000, min_score=-1)
+        handoff, hits = reader.boot("Deployment", budget_tokens=1000, min_score=-1)
+        return "\n".join([handoff.text, *(hit.entry.text for hit in hits)])
+
+    with monkeypatch.context() as race:
+        race.setattr(reader, "latest", latest_then_replace)
+        before = context()
+
+    assert writer.get(old.id).status == "superseded"
+    assert old.text in before and fact.text in before
+    assert replacement_text not in before
+    # Consistency must not become permanent staleness: the next call refreshes.
+    after = context()
+    assert replacement_text in after and fact.text in after
+    assert old.text not in after

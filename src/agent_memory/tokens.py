@@ -27,7 +27,8 @@ def _encoder():
 def count_tokens(text: str) -> int:
     enc = _encoder()
     if enc is not None:
-        return len(enc.encode(text))
+        # Memories may quote tokenizer markers; they are data, not control tokens.
+        return len(enc.encode_ordinary(text))
     # Approximation: count word and punctuation chunks, then nudge up ~30%
     # because BPE typically splits long words into multiple tokens.
     return round(len(_APPROX_RE.findall(text)) * 1.3)

@@ -456,6 +456,29 @@ class MemoryStore:
         alongside it. Durable types are unaffected. Combined with `min_score`,
         stale status notes eventually drop out of recall on their own.
         """
+        self._reload_if_changed()
+        return self._recall_snapshot(
+            query,
+            k=k,
+            type_filter=type_filter,
+            budget_tokens=budget_tokens,
+            exclude_ids=exclude_ids,
+            min_score=min_score,
+            decay=decay,
+        )
+
+    def _recall_snapshot(
+        self,
+        query: str,
+        *,
+        k: int,
+        type_filter: Optional[str] = None,
+        budget_tokens: Optional[int] = None,
+        exclude_ids: Optional[set[str]] = None,
+        min_score: float = 0.0,
+        decay: bool = True,
+    ) -> list[RecallHit]:
+        """Score the current snapshot without reloading; caller holds the mutex."""
         _validate_limits(k, budget_tokens, min_score)
         if not isinstance(query, str) or len(query) > MAX_TEXT_CHARS:
             raise ValueError(
@@ -463,7 +486,6 @@ class MemoryStore:
             )
         if type_filter is not None and type_filter not in MEMORY_TYPES:
             raise ValueError(f"unknown memory type {type_filter!r}")
-        self._reload_if_changed()
         if not self._entries or k == 0 or budget_tokens == 0 or not query.strip():
             return []
         qvec = validated_embed(self.embedder, [query])[0]
@@ -512,7 +534,8 @@ class MemoryStore:
 
         The budget applies to memory content across both parts. If the latest
         handoff is too large to fit, it is skipped and the full budget remains
-        available for relevant memories.
+        available for relevant memories. Both parts use one snapshot, even if
+        another process commits a correction while this call is running.
         """
         _validate_limits(k, budget_tokens, min_score)
         remaining = budget_tokens
@@ -531,7 +554,9 @@ class MemoryStore:
                 if remaining is not None:
                     remaining -= latest_handoff.tokens
 
-        hits = self.recall(
+        # latest() already refreshed the snapshot. Reloading again here could
+        # combine a retired handoff with its replacement from another writer.
+        hits = self._recall_snapshot(
             task,
             k=k,
             budget_tokens=remaining,

@@ -167,6 +167,14 @@ def test_stats_reports_the_store(server):
     assert "1 memories" in out and "decision=1" in out
 
 
+def test_literal_tokenizer_marker_survives_mcp_roundtrip(server):
+    text = "The parser must preserve the literal <|endoftext|> marker."
+    assert "Saved" in call(server, "memory_write", text=text)
+    assert "1 memories" in call(server, "memory_stats")
+    assert text in call(server, "memory_recall", query="parser literal marker")
+    assert text in call(server, "memory_boot", task="parser literal marker")
+
+
 @pytest.mark.parametrize("tool", ["memory_update", "memory_forget", "memory_supersede"])
 def test_correction_tools_require_revision_and_reject_stale_read(server, tool):
     saved = call(server, "memory_write", text="Retry three times.")
