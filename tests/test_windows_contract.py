@@ -4,8 +4,7 @@ import json
 
 import pytest
 
-from agent_memory import HashingEmbedder, MemoryStore
-from agent_memory import hooks
+from agent_memory import HashingEmbedder, MemoryStore, hooks
 
 
 @pytest.mark.parametrize(
@@ -70,6 +69,7 @@ def test_permanent_windows_replace_failure_is_bounded_and_keeps_original(
 ):
     import os
     import time
+
     from agent_memory._locking import _replace_file
 
     source, target = tmp_path / "new.json", tmp_path / "store.json"

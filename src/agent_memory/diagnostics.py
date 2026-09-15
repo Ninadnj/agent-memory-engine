@@ -1,14 +1,15 @@
 """Local diagnostics and evidence inspection; never evaluates memory text."""
 
-from dataclasses import asdict
 import os
-from pathlib import Path
 import re
 import subprocess
+from dataclasses import asdict
+from pathlib import Path
 
 from .embeddings import embedding_config
+from .models import _validate_limits, startup_fresh
 from .rendering import render_entry
-from .store import MemoryStore, _validate_limits, find_project_root, startup_fresh
+from .store import MemoryStore, find_project_root
 from .tokens import count_tokens, using_exact_tokenizer
 
 
@@ -96,7 +97,7 @@ def explain_recall(
     store: MemoryStore, query: str, *, k=5, budget=300, min_score=0.0, decay=True
 ) -> dict:
     _validate_limits(k, budget, min_score)
-    hits = store.recall(query, k=max(1, len(store.all())), min_score=-1, decay=decay)
+    hits = store.recall(query, k=max(1, len(store)), min_score=-1, decay=decay)
     rows, parts = [], []
     for hit in hits:
         block = render_entry(hit.entry)

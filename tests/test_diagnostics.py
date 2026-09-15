@@ -124,6 +124,7 @@ def test_existing_embedding_configuration_is_sticky(tmp_path, monkeypatch):
 def test_long_markdown_paragraphs_are_bounded_without_losing_content():
     import importlib.util
     from pathlib import Path
+
     from agent_memory import count_tokens
 
     spec = importlib.util.spec_from_file_location(

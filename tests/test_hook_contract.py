@@ -1,10 +1,12 @@
 """Real Git state and client payload contracts, separate from handler internals."""
 
-from datetime import datetime, timedelta, timezone
+import pytest
+from test_hooks import payload, store_for
 
 from agent_memory import hooks
-from test_hooks import repo, payload, store_for, offline  # noqa: F401
 from agent_memory.tokens import count_tokens
+
+pytestmark = pytest.mark.usefixtures("offline")
 
 
 def test_documented_field_takes_precedence_over_legacy_alias(repo):
@@ -20,12 +22,10 @@ def test_documented_field_takes_precedence_over_legacy_alias(repo):
     assert "requireAdmin" in result["additionalContext"]
 
 
-def test_startup_drops_old_handoff_and_worklog(repo):
+def test_startup_drops_old_handoff_and_worklog(repo, write_aged):
     store = store_for(repo)
     for kind in ("handoff", "worklog"):
-        entry = store.write("Retired staging server deployment.", type=kind)
-        entry.created_at = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
-    store.save()
+        write_aged(store, "Retired staging server deployment.", type=kind, days=90)
     assert hooks.session_start(payload(repo, "SessionStart")) == {}
 
 
