@@ -2,7 +2,7 @@
 
 There are two separate checks. Neither establishes production performance by itself.
 
-**v0.4.0rc1 scope:** the live-agent comparison is deferred. The retrieval diagnostic, fixture validation and automated tests run without model calls or model credentials. The live-run commands below remain available for a future evaluation; they are optional and are not part of the candidate's release checks.
+**v0.4 candidate scope:** the live-agent comparison remains deferred. The retrieval diagnostic, fixture validation and automated tests run without model calls or model credentials. The live-run commands below remain available for a future evaluation; they are optional and are not part of the candidate's release checks.
 
 ## Retrieval diagnostic
 

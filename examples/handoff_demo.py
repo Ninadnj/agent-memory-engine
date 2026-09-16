@@ -7,12 +7,12 @@ this demonstrates the protocol, not a live Claude Code or Codex session.
 """
 
 import asyncio
-from contextlib import AsyncExitStack
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
+from contextlib import AsyncExitStack
+from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client

@@ -23,9 +23,9 @@ import os
 import sys
 from pathlib import Path
 
-from .embeddings import default_min_score
-from .rendering import boot_context, recall_context, empty_message
 from .diagnostics import doctor, explain_recall, inspect_memory
+from .embeddings import default_min_score
+from .rendering import boot_context, empty_message, recall_context, tag
 from .store import (
     GLOBAL_STORE,
     MEMORY_TYPES,
@@ -62,10 +62,6 @@ def _min_score(args, store: MemoryStore) -> float:
     if getattr(args, "min_score", AUTO_MIN_SCORE) != AUTO_MIN_SCORE:
         return args.min_score
     return default_min_score(store.embedder)
-
-
-def _tag(entry) -> str:
-    return f"{entry.type} · {entry.agent}" if entry.agent else entry.type
 
 
 def cmd_write(args) -> None:
@@ -146,7 +142,7 @@ def cmd_list(args) -> None:
         # correct or forget.
         faded = decay_factor(e)
         note = f"{age:.0f}d" + (f", faded to {faded:.0%}" if faded < 0.95 else "")
-        print(f"{e.id}  [{_tag(e)} · r{e.revision} · {e.status} · {note}] {e.text}")
+        print(f"{e.id}  [{tag(e)} · r{e.revision} · {e.status} · {note}] {e.text}")
 
 
 def cmd_update(args) -> None:
@@ -209,7 +205,7 @@ def cmd_install_hooks(args) -> None:
     from . import hooks
 
     root = Path.home() if args.user else (find_project_root() or Path.cwd())
-    settings = root / ".claude" / ("settings.json" if args.user else "settings.json")
+    settings = root / ".claude" / "settings.json"
 
     if args.uninstall:
         hooks.uninstall(settings)
@@ -225,7 +221,7 @@ def cmd_install_hooks(args) -> None:
     if not args.with_prompt_recall:
         print(
             "Add --with-prompt-recall to also surface memories relevant to each "
-            "prompt (costs a model load per message)."
+            "prompt (the semantic backend loads its model per message)."
         )
 
 

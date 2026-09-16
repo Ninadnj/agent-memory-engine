@@ -1,12 +1,18 @@
 # Releasing v0.4
 
-The package version is `0.4.0rc1`. It is a reviewable release candidate, with an explicit format/API migration. A local build does not imply a GitHub or PyPI release exists.
+The current package version is `0.4.0rc2`. It remains a release candidate.
+The [migration notes](migration-v0.4.md) cover format-3 stores and the rc2
+Python API changes. A local build is not a published release.
 
 ## Candidate scope
 
-The live-agent comparison is deferred for this candidate. Release preparation uses the offline tests, fixture checks, MCP demo and package checks below; none requires model credentials or a live model session. The evaluation adapter remains available for future measurements. Do not describe the deferred comparison as passed or use the retrieval diagnostic to claim better coding outcomes or lower whole-session costs.
+rc2 protects returned snapshots, serializes operations within one store object,
+separates records and JSON persistence, and defaults new stores to offline
+hashing. The local JSON/NumPy backend and existing file format remain unchanged.
 
-The candidate is available for review in [PR #6](https://github.com/Ninadnj/agent-memory-engine/pull/6). Stable `0.4.0` remains subject to migration feedback and verified coding-client sessions.
+The live-agent comparison remains deferred. The tests, fixture checks and MCP
+demo below require no model credentials. Verified client sessions and migration
+feedback are still required before a stable release.
 
 ## Reproduce the checks
 
@@ -18,36 +24,31 @@ git diff --exit-code -- eval/results.md eval/results.json
 python eval/run_tasks.py --verify-fixtures
 python examples/handoff_demo.py
 python examples/quickstart.py
+ruff check src tests eval scripts examples
+ruff format --check src
 python -m build
+python scripts/check_wheel.py
 ```
 
-Install the generated wheel in a clean environment and run `agent-memory doctor` against a temporary path before publishing. CI also checks Python/OS combinations and both MCP SDK majors. The optional semantic job downloads a model and is run manually; its absence must not be presented as a pass.
+CI checks Linux, macOS, Windows, Python 3.10/3.12 and MCP 1.x/2.x.
+The optional semantic job downloads a model and is run manually.
+See the [rc2 verification record](verification-rc2.md) for actual results;
+a job's presence in CI configuration alone is not evidence of a pass.
 
-## Candidate review
+## Review before publishing
 
-- Inspect the legacy migration, stale-revision errors, file-lock protocol and rollback behavior.
-- Test the documented connection in at least one actual coding client, then record application/SDK/OS versions.
-- Run the external-agent evaluation with a frozen test split before making coding-performance claims. A release without those results must keep the limitation visible.
-- Check that no project memory files, secrets, private logs or local backup files entered the release.
-
-## Prerelease notes
-
-Use the following scope when preparing the GitHub prerelease, with artifacts built from the reviewed tag:
-
-**Agent Memory Engine v0.4.0rc1** adds durable local memory identity and traceable corrections for coding agents. UUID4 IDs prevent deletion from resetting the generated ID sequence; legacy and unique caller-supplied IDs stay usable. Revision checks reject stale edits, while bounded history and explicit supersession make changed decisions inspectable. Shared writes use OS locks, atomic replacement and rollback. The storage backend remains local JSON and NumPy.
-
-The candidate also includes a five-minute MCP demo, CLI diagnostics, migration guidance and an optional coding-evaluation harness. The demo uses two real MCP server processes and makes no model calls.
-
-**Validation:** the full hashing suite passed with **297 passed, 0 failed and 1 skipped** on Linux Python 3.10/3.12, Windows Python 3.12 and macOS Python 3.12. Both MCP SDK majors, package build and fresh installation passed. All 30 task graders reject the known broken implementation and accept the reference fix. The [verification record](verification-codex-adapter.md) links the completed CI and distinguishes these checks from agent performance.
-
-**Upgrade:** stop all shared writers and save a byte-for-byte backup of the original store before upgrading every client. v0.4 reads formats 1/2 and writes format 3; mixed old/new writers are unsupported. MCP/CLI edits now require the inspected revision. For rollback, stop writers and restore the original backup with its matching old software; a v0.4 export is not a downgrade converter. Read the full [migration notes](migration-v0.4.md).
-
-**Limitations:** the live-agent comparison is deferred, actual coding-client MCP use remains unverified, and the optional semantic-model check was skipped. This prerelease makes no claim of improved agent coding performance or whole-session token savings. Its concurrency contract covers cooperating v0.4 processes on a local filesystem.
+- Check snapshot ownership, revision conflicts, rollback and both locking scopes.
+- Read the Python compatibility changes; format 3 itself needs no conversion.
+- Verify the documented connection in an actual coding client and record versions.
+- Keep retrieval diagnostics distinct from real agent performance evidence.
 
 ## Publish
 
-After review and successful required CI, use the reviewed commit for the tag and release. Build wheel and sdist from that tag, attach them and the changelog to a GitHub prerelease, and label it `v0.4.0rc1`. Publish to PyPI only with the project's configured publisher credentials/trusted publisher; no credentials are embedded here. Keep the original-store backup and rollback instructions in the release notes.
+Build wheel and sdist from the reviewed commit after required CI passes.
+Tag that commit `v0.4.0rc2` and attach the artifacts and changelog to a GitHub
+prerelease. Publish to PyPI only through the project's configured publisher.
+Do not silently relabel candidate artifacts as stable builds.
 
-A stable `0.4.0` release should follow migration feedback and verified client sessions. Do not silently relabel an existing candidate artifact; build again with the stable version from its reviewed commit.
-
-The implementation record and exact local results are in [verification](verification-v0.4.md).
+The earlier candidate's evidence remains in the
+[v0.4 verification](verification-v0.4.md) and
+[adapter verification](verification-codex-adapter.md) records.

@@ -7,27 +7,28 @@ grader against known broken and reference implementations, not an agent.
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import random
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import asdict
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+from task_cases import TASKS, Task, project_source
 
 from agent_memory import HashingEmbedder, MemoryStore, count_tokens, default_min_score
 from agent_memory.embeddings import embedding_config
 from agent_memory.rendering import recall_context
 from agent_memory.tokens import using_exact_tokenizer
-from task_cases import TASKS, Task, project_source
 
 ARMS = ("no_memory", "curated_markdown", "engine")
 

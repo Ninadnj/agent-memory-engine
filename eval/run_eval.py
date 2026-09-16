@@ -446,6 +446,7 @@ def main() -> None:
     # silently overwrite it with numbers CI can never reproduce.
     stem = "results" if args.embedder == "hashing" else "results_sentence_transformers"
     md = render_markdown(results)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / f"{stem}.md").write_text(md + "\n")
     (args.out_dir / f"{stem}.json").write_text(json.dumps(results, indent=2) + "\n")
     print(md)

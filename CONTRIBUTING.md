@@ -10,6 +10,8 @@ AGENT_MEMORY_EMBEDDER=hashing python -m pytest -q -ra
 python eval/run_eval.py
 python eval/run_tasks.py --verify-fixtures
 python examples/handoff_demo.py
+ruff check src tests eval scripts examples
+ruff format --check src
 python -m build
 ```
 
@@ -20,5 +22,11 @@ For a bug, first demonstrate a failing regression and record the existing baseli
 Keep generated retrieval results current if their underlying behavior changes. Keep calibration and test tasks separate; do not tune retrieval on the coding test split. Never publish fixture/reference results as model performance. Include actual model/settings identifiers with agent runs.
 
 Core dependencies should stay small. MCP and model integrations remain optional. For persistence changes, cover multiple instances, malformed data, failed writes, legacy IDs and restart behavior. For tool changes, test the real MCP schema and stdio boundary.
+
+Keep client adapters thin, record rules in `models.py`, and file encoding in
+`persistence.py`. Store operations own revisions, retrieval and transactions.
+Return detached snapshots from public APIs; never expose live internal entries.
+Include same-object threaded readers as well as separate writer processes when
+changing transaction behavior. See [architecture](docs/architecture.md).
 
 Feature requests should include a concrete workflow and what currently fails. A benchmark showing where the current store stops working is more useful than a new backend in search of a workload.

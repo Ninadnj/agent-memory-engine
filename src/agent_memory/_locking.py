@@ -1,9 +1,9 @@
 """OS-owned local file locks. Process exit releases the lock automatically."""
 
-from contextlib import contextmanager
 import os
-from pathlib import Path
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 
 def _replace_file(source: Path, target: Path, timeout: float = 1.0) -> None:

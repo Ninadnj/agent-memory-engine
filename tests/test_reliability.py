@@ -1,11 +1,10 @@
 """Regression contracts from the September engineering review."""
 
-from datetime import datetime, timedelta, timezone
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -54,24 +53,27 @@ def test_documented_prompt_event_reaches_the_hook_process(tmp_path):
     )
 
 
-def test_startup_does_not_reintroduce_an_expired_handoff():
+def test_startup_does_not_reintroduce_an_expired_handoff(write_aged):
     store = open_store()
-    entry = store.write("Next: deploy the retired staging server.", type="handoff")
-    entry.created_at = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    entry = write_aged(
+        store, "Next: deploy the retired staging server.", type="handoff", days=90
+    )
     handoff, hits = store.boot("fix invoice rounding", min_score=0.15)
     assert handoff is None
     assert all(hit.entry.id != entry.id for hit in hits)
 
 
-def test_correction_refreshes_an_old_state_without_erasing_creation_time():
+def test_correction_refreshes_an_old_state_without_erasing_creation_time(write_aged):
     store = open_store()
-    entry = store.write("Currently updating the staging server.", type="state")
-    entry.created_at = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    entry = write_aged(
+        store, "Currently updating the staging server.", type="state", days=90
+    )
     created = entry.created_at
     store.update(entry.id, text="Currently fixing invoice rounding.")
     hits = store.recall("Currently fixing invoice rounding.", min_score=0.15)
     assert hits and hits[0].entry.id == entry.id
-    assert entry.created_at == created
+    assert store.get(entry.id).created_at == created
+    assert store.get(entry.id).updated_at > created
 
 
 def test_negation_is_not_a_duplicate():

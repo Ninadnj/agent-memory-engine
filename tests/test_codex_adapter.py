@@ -2,13 +2,12 @@
 
 import io
 import json
-from pathlib import Path
 import subprocess
 import sys
-
-import pytest
+from pathlib import Path
 
 import codex_adapter
+import pytest
 import run_tasks
 from task_cases import TASKS
 

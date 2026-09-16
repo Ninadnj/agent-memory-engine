@@ -1,16 +1,16 @@
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
-
-from agent_memory import count_tokens
 from run_tasks import context_for, evaluate_tasks, grade, prepare, run_agent, summarize
 from task_cases import TASKS
+
+from agent_memory import count_tokens
 
 
 @pytest.mark.parametrize("task", TASKS, ids=lambda t: t.id)
